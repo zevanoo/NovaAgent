@@ -17,6 +17,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -87,30 +88,36 @@ private fun splitFences(text: String): List<Block> {
  * Inline formatting in one pass: `code`, **bold**, *italic*. A tiny scanner beats
  * a regex chain here because nested delimiters otherwise swallow each other.
  */
-private fun annotated(text: String): AnnotatedString = buildAnnotatedString {
+private fun annotated(text: String): AnnotatedString {
+    val out = AnnotatedString.Builder()
     var i = 0
     while (i < text.length) {
         val rest = text.substring(i)
         val match = INLINE.find(rest)
         if (match == null) {
-            append(rest)
+            out.append(rest)
             break
         }
-        append(rest.substring(0, match.range.first))
+        out.append(rest.substring(0, match.range.first))
         val token = match.value
+        val start = out.length
         when {
-            token.startsWith("`") -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
-                append(token.trim('`'))
+            token.startsWith("`") -> {
+                out.append(token.trim('`'))
+                out.addStyle(SpanStyle(fontFamily = FontFamily.Monospace), start, out.length)
             }
-            token.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                append(token.trim('*'))
+            token.startsWith("**") -> {
+                out.append(token.trim('*'))
+                out.addStyle(SpanStyle(fontWeight = FontWeight.SemiBold), start, out.length)
             }
-            else -> withStyle(
-                SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
-            ) { append(token.trim('*')) }
+            else -> {
+                out.append(token.trim('*'))
+                out.addStyle(SpanStyle(fontStyle = FontStyle.Italic), start, out.length)
+            }
         }
         i += match.range.last + 1
     }
+    return out.toAnnotatedString()
 }
 
 private val INLINE = Regex("`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*")

@@ -4,9 +4,7 @@ import android.content.Context
 import android.graphics.Typeface
 import android.net.Uri
 import android.provider.OpenableColumns
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import java.io.File
 
 /**
@@ -27,12 +25,15 @@ object AppFonts {
 
     val roles = listOf(ROLE_BODY, ROLE_MONO, ROLE_HEADING)
 
-    /** Bundled fallbacks. One file per role; other weights are synthesized. */
-    private val bundledBody = FontFamily(Font("fonts/body/Inter-Regular.ttf", FontWeight.Normal))
-    private val bundledMono = FontFamily(Font("fonts/mono/JetBrainsMono-Regular.ttf", FontWeight.Normal))
-    private val bundledHeading = FontFamily(Font("fonts/heading/InterTight-Regular.ttf", FontWeight.Normal))
+    /** Asset paths per role. Read through the AssetManager, not the res font API. */
+    private val assetPaths = mapOf(
+        ROLE_BODY to "fonts/body/Inter-Regular.ttf",
+        ROLE_MONO to "fonts/mono/JetBrainsMono-Regular.ttf",
+        ROLE_HEADING to "fonts/heading/InterTight-Regular.ttf",
+    )
 
     private val userCache = HashMap<String, FontFamily?>()
+    private val assetCache = HashMap<String, FontFamily?>()
 
     fun family(context: Context, role: String): FontFamily {
         val file = userFontFile(context, role)
@@ -46,10 +47,11 @@ object AppFonts {
             userCache[key] = parsed
             if (parsed != null) return parsed
         }
-        return when (role) {
-            ROLE_MONO -> bundledMono
-            ROLE_HEADING -> bundledHeading
-            else -> bundledBody
+        return assetCache.getOrPut(role) {
+            runCatching {
+                val path = assetPaths[role] ?: return@runCatching null
+                Typeface.createFromAsset(context.assets, path)?.let { FontFamily(it) }
+            }.getOrNull() ?: FontFamily.Default
         }
     }
 
@@ -59,13 +61,14 @@ object AppFonts {
     /** First font file installed for this role. */
     fun userFontFile(context: Context, role: String): File? =
         userDir(context, role).listFiles()
-            ?.filter { it.isFile && it.name.lowercase().matches(Regex(".*\.(ttf|otf)")) }
+            ?.filter { it.isFile && (it.name.lowercase().endsWith(".ttf") || it.name.lowercase().endsWith(".otf")) }
             ?.minByOrNull { it.name }
 
     /** Copies a picked font into the role folder, replacing the previous one. */
     fun install(context: Context, role: String, uri: Uri): String {
         val name = displayName(context, uri).orEmpty()
-        if (!name.lowercase().matches(Regex(".*\.(ttf|otf)"))) return "Error: file harus .ttf atau .otf"
+        val lower = name.lowercase()
+        if (!lower.endsWith(".ttf") && !lower.endsWith(".otf")) return "Error: file harus .ttf atau .otf"
 
         val dir = userDir(context, role)
         dir.listFiles()?.forEach { if (it.isFile) it.delete() }

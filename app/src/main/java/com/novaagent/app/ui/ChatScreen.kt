@@ -157,7 +157,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
-                                overflow = TextOverflow.MiddleEllipsis,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
                                     .padding(top = 1.dp)
                                     .clickable { showWorkdir = true },
