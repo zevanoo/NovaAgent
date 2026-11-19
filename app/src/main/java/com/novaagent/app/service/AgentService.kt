@@ -23,6 +23,7 @@ import com.novaagent.app.data.ChatDb
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Message
+import com.novaagent.app.data.SessionTitle
 import com.novaagent.app.data.Snapshots
 import com.novaagent.app.data.Workspace
 import kotlinx.coroutines.CancellationException
@@ -104,7 +105,7 @@ class AgentService : Service() {
             val dao = ChatDb.of(this@AgentService).chat()
             try {
                 val session = dao.session(sessionId)
-                val title = session?.title?.takeIf { it.isNotBlank() && it != NEW_TITLE }
+                val title = session?.title?.takeIf { it.isNotBlank() && it != SessionTitle.NEW }
                     ?: dao.contents(sessionId).firstOrNull()?.take(60)
                     ?: "sesi-$sessionId"
                 val defaultDir = Workspace.defaultDir(this@AgentService)

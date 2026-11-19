@@ -139,7 +139,7 @@ object I18n {
         prefs(context).getString(KEY, null) ?: defaultForLocale()
 
     fun set(context: Context, lang: String) {
-        prefs(context).putString(KEY, if (lang == EN) EN else ID).apply()
+        prefs(context).edit().putString(KEY, if (lang == EN) EN else ID).apply()
     }
 
     fun isEnglish(context: Context): Boolean = current(context) == EN

@@ -9,8 +9,8 @@ package com.novaagent.app.data
  */
 object SessionTitle {
 
-    /** Placeholder used only inside the draft screen; never stored. */
-    const val DRAFT = ""
+    /** Placeholder title an old database may still contain. */
+    const val NEW = "Sesi baru"
 
     private val filler = setOf(
         "tolong", "coba", "bisa", "mohon", "please", "hey", "halo", "hai", "hi",
@@ -47,6 +47,6 @@ object SessionTitle {
             .take(60)
             .trimEnd(' ', ',', ':', ';', '-')
 
-        return title.ifBlank { "Sesi baru" }
+        return title.ifBlank { NEW }
     }
 }

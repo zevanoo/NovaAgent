@@ -96,8 +96,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 0 means the draft screen: not a session yet. The app opens here on purpose —
+     * a session only exists once the user sends the first prompt, so the drawer
+     * never fills with empty rows.
+     */
     var sessionId by mutableStateOf(0L)
         private set
+
+    /** Random greeting for the draft screen so the app never opens blank. */
+    var welcome by mutableStateOf("")
+        private set
+
+    /** Title in the app bar: the session's own title, blank on a draft. */
+    val sessionTitle = MutableStateFlow("")
+
+    val lang = MutableStateFlow(I18n.current(app))
 
     val messages = MutableStateFlow<List<UiMessage>>(emptyList())
     val sessions = MutableStateFlow<List<Session>>(emptyList())
