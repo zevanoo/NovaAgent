@@ -29,9 +29,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.addJsonObject
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.put
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -246,16 +244,18 @@ class AgentService : Service() {
 
     private fun encodeRounds(rounds: List<ToolRound>): String {
         if (rounds.isEmpty()) return ""
-        return buildJsonArray {
-            rounds.forEach { r ->
-                addJsonObject {
+        val arr = JSONArray()
+        rounds.forEach { r ->
+            arr.put(
+                JSONObject().apply {
                     put("name", r.name)
                     put("detail", r.detail)
                     put("thought", r.thought)
                     put("result", r.result)
                 }
-            }
-        }.toString()
+            )
+        }
+        return arr.toString()
     }
 
     private fun ensureChannel() {

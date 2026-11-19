@@ -24,11 +24,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 /**
@@ -154,13 +149,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun decodeRounds(raw: String): List<UiRound> {
         if (raw.isBlank()) return emptyList()
         return runCatching {
-            Json.parseToJsonElement(raw).jsonArray.map { el ->
-                val o = el as JsonObject
+            val arr = org.json.JSONArray(raw)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
                 UiRound(
-                    name = o["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    detail = o["detail"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    thought = o["thought"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    result = o["result"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    name = o.optString("name"),
+                    detail = o.optString("detail"),
+                    thought = o.optString("thought"),
+                    result = o.optString("result"),
                 )
             }
         }.getOrDefault(emptyList())
