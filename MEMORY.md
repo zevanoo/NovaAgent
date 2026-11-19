@@ -1,12 +1,12 @@
 # MEMORY.md — NovaAgent project log
 
 ## Status
-Milestone aktif: **M2 — Termux bridge**. M0 & M1 selesai, APK terbangun & signed di CI.
+Milestone aktif: **M3 — Foreground service + memory cap**. M0–M2 selesai, APK signed di CI.
 
 ## Milestone
 - [x] M0 — Scaffolding (APK debug terbangun di CI, signed, terverifikasi)
 - [x] M1 — UI/Provider (chat UI, settings provider, Room session, 6 slash command)
-- [ ] M2 — Termux bridge
+- [x] M2 — Termux bridge (RUN_COMMAND + read_file/write_file/list_dir/run_shell + agent loop)
 - [ ] M3 — Foreground service + memory cap
 - [ ] M4 — Memory file
 - [ ] M5 — Sistem skill
@@ -14,6 +14,45 @@ Milestone aktif: **M2 — Termux bridge**. M0 & M1 selesai, APK terbangun & sign
 - [ ] M7 — Polish & stabilitas
 
 ## Log
+
+### M2 — Termux bridge (2026-11-19)
+Dibuat:
+- `bridge/TermuxBridge.kt` — `Intent("com.termux.RUN_COMMAND")` dikirim lewat
+  `startService` (bukan `startActivity`; RunCommandService-nya service, jadi
+  `startActivity` bakal gagal). RUN_COMMAND fire-and-forget: command dibungkus
+  menulis `out.txt` + `code.txt` ke `/sdcard/novaagent/run/<id>/`, lalu dipoll
+  sampai `code.txt` muncul (timeout default 120s). Output digabung stdout+stderr.
+- `agent/AgentTools.kt` — 4 tool: `read_file` (offset/limit), `write_file`,
+  `list_dir`, `run_shell` (timeout_ms). File-IO dijalankan di dalam Termux juga,
+  supaya shell dan file punya namespace yang sama (path app-sandbox ≠ path Termux).
+  Allowlist: `/sdcard`, `/storage/emulated/0`, HOME Termux, tmp Termux; `~` dan
+  path relatif di-expand lalu `canonicalFile` (menahan `..`).
+- `agent/AgentLoop.kt` — model → tool_calls → hasil → ulangi, maks 6 putaran.
+  `onTool` callback dipakai UI untuk menandai tool yang jalan.
+- `net/LlmClient.kt` — `chatWithTools` mengembalikan `Reply(content, toolCalls, raw)`;
+  `raw` (pesan assistant mentah) wajib di-echo utuh di request berikutnya, kalau
+  direka ulang provider menolak.
+- `data/Workspace.kt` — working dir tool disimpan di SharedPreferences.
+- `ui/ChatViewModel` — loop agent di `viewModelScope` (BUKAN pindah ke service;
+  itu M3), `apiHistory()` membangun ulang history dari Room dan membuang marker tool.
+- `UiMessage` dapat `id` supaya LazyColumn punya key stabil.
+- Command `/termux [path]` + panel status bridge di Settings.
+- Manifest: `com.termux.permission.RUN_COMMAND`, `MANAGE_EXTERNAL_STORAGE`.
+
+Verifikasi:
+- CI run `44473382027` (commit `e56c03d`) **success**. APK 9.712.960 bytes,
+  10 dex, sha256 `d6e6f8ed669f5e1701eef3486861b8279f41ab379a4a35b82c1accca1058189e`,
+  signed v2 `CN=Android Debug`. Permission dicek ada di manifest biner:
+  `RUN_COMMAND`, `MANAGE_EXTERNAL_STORAGE`, `INTERNET`, `queried com.termux.api`.
+- **Belum diverifikasi di device:** tool call nyata ke Termux. Butuh
+  `allow-external-apps=true` di `~/.termux/termux.properties` + restart Termux,
+  dan izin storage dari app.
+- Catatan: `aapt2` dari Android SDK x86_64, jadi verifikasi manifest dilakukan
+  dengan membaca `AndroidManifest.xml` di dalam APK (string UTF-16) dari Python.
+
+Bug CI yang ketemu (sudah fix):
+- `"$HOME Termux"` di string Kotlin → interpolasi variabel `HOME` yang tidak ada.
+- `Settings` dipakai di `AgentLoop` tanpa import.
 
 ### M1 — UI/Provider (2026-11-19)
 Dibuat:
@@ -67,6 +106,15 @@ Dibuat:
 - Ikon: adaptive icon (vector), warna `#D97757`.
 
 ## Keputusan
+- **Tool file-IO dijalankan lewat Termux**, bukan langsung dari app. Kalau
+  `read_file` pakai `java.io.File` di app sandbox, model melihat dua namespace
+  berbeda (path app vs path Termux) dan hasilnya membingungkan. Satu namespace.
+- **Hasil RUN_COMMAND lewat file di `/sdcard`**, karena intent-nya tak bisa
+  mengembalikan hasil. Butuh `MANAGE_EXTERNAL_STORAGE`; kalau app di-reset izinnya,
+  tool langsung memberi pesan jelas, bukan gagal senyap.
+- **Allowlist path** (`/sdcard`, `/storage/emulated/0`, HOME + tmp Termux).
+  Bukan sandbox sungguhan — model tetap bisa `run_shell` apa saja. Ini pembatas
+  untuk kecelakaan path, bukan pertahanan terhadap prompt injection.
 - **Non-streaming LLM call** untuk M1. SSE parsing tidak memberi nilai sebelum
   tool-calling ada (M2), dan satu balasan JSON jauh lebih sedikit kode. Upgrade
   ke `stream=true` kalau latensi token jadi masalah nyata.
