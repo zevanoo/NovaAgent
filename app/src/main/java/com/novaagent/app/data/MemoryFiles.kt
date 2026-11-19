@@ -132,15 +132,17 @@ object MemoryFiles {
         return file to (read(file).orEmpty())
     }
 
-    private fun fileFor(context: Context, workdir: String, target: String): File? = when (target.uppercase()) {
-        "SOUL" -> globalFile(context, SOUL)
-        "USER" -> globalFile(context, USER)
-        "PROJECT", "MEMORY" -> {
-            if (workdir.isBlank()) return null
-            ensureProject(context, workdir)
-            projectFile(context, slugOf(workdir), PROJECT)
+    private fun fileFor(context: Context, workdir: String, target: String): File? {
+        return when (target.uppercase()) {
+            "SOUL" -> globalFile(context, SOUL)
+            "USER" -> globalFile(context, USER)
+            "PROJECT", "MEMORY" -> {
+                if (workdir.isBlank()) return null
+                ensureProject(context, workdir)
+                projectFile(context, slugOf(workdir), PROJECT)
+            }
+            else -> null
         }
-        else -> null
     }
 
     /** Overwrites a memory file from the editor. Refuses a blank write to avoid wiping memory by accident. */

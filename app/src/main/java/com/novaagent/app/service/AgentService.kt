@@ -163,7 +163,7 @@ class AgentService : Service() {
      * round cap, so its stored assistant text is a limit notice — replay it as a
      * user nudge ("lanjut") instead of pretending the model said it.
      */
-    private fun buildHistory(
+    private suspend fun buildHistory(
         dao: com.novaagent.app.data.ChatDao,
         sessionId: Long,
         continueThread: Boolean,
