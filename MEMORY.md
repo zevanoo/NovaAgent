@@ -180,6 +180,52 @@ Dibuat:
 - `foregroundServiceType` butuh `POST_NOTIFICATIONS` runtime (API 33+), jadi diminta
   saat app dibuka, bukan saat service start.
 
+## M4 — Memory file + workdir 3 tingkat + turn limit
+
+**Selesai dan build hijau.** Run `44521703598` (commit remote `bfcea39`), APK
+9.764.220 bytes, sha256 `5ba584f90547de884c08cddffb83e7290b4b4ba7f124e48531a90062853ed710`.
+
+- `MemoryFiles.kt` — dua lapis sesuai PRD 4: `filesDir/memory/global/SOUL.md` +
+  `USER.md` (selalu di system prompt), `filesDir/memory/projects/<slug>/MEMORY.md`
+  (hanya dimuat kalau workdir resolve ke project itu). Tidak ada `PROJECTS.md`;
+  ringkasan lintas project sengaja dilepas supaya global tetap personalisasi.
+- Kebijakan tulis memory di `Limits.memoryWritePolicy`: `auto` atau `confirm`
+  (default confirm). `confirm` menyimpan catatan di SharedPreferences sebagai
+  pending, UI chat menampilkan banner Simpan / Tolak. Agent menulis lewat tool
+  `save_memory`; `/memory approve|reject <target>` juga tersedia.
+- `Workspace.kt` — resolusi `sesi > project > main`, `known()` untuk dropdown
+  folder, disimpan per sesi di kolom `sessions.workdir`.
+- `Limits.maxRounds` default **20**; watchdog `withTimeoutOrNull` dihapus total.
+  Saat limit tercapai: notifikasi `notifyLimit` dengan aksi Lanjut / Prompt baru,
+  dan catatan otomatis ditambahkan ke MEMORY.md project.
+- Room v2 + `MIGRATION_1_2`: `sessions.workdir`, `messages.rounds`.
+- `ChatScreen` — baris tool di bawah balasan, tap baris = tampil/sembunyi hasil,
+  tap baris thought = tampil/sembunyi detail.
+
+Keputusan teknis:
+- `kotlinx-serialization` dibuang. Plugin tidak resolve di root `plugins {}`
+  tanpa version (`Plugin [id: 'org.jetbrains.kotlin.plugin.serialization'] was not
+  found`), dan menambah plugin + dependency untuk satu encode/decode JSON tidak
+  sepadan. Pakai `org.json` yang sudah dipakai seluruh project.
+- `prune()` memotong riwayat ke 60 pesan (2 pertama + ekor) supaya request tidak
+  membengkak tanpa membuang konteks pembuka.
+- "lanjut" me-replay notice limit sebagai pesan user `lanjut`, bukan sebagai
+  ucapan model — supaya history provider tetap jujur.
+
+Error yang ditemui:
+- `Returns are prohibited for functions with an expression body` (`fileFor`) —
+  ganti ke block body.
+- `Suspend function 'messages' should be called only from a coroutine`
+  (`buildHistory`) — tambah `suspend`.
+- `git push` dari Windows gagal: credential manager minta GUI, tidak ada tty
+  (`/dev/tty: No such device or address`), `ls-remote` pun kena. Push lewat
+  `tools/gh_push_rest.py` (Git Data API, satu commit per HEAD, parent = remote
+  main, token dari env `GH_TOKEN`).
+
+**Belum diverifikasi on-device.** Yang perlu dicek user: memory project benar
+hanya termuat untuk workdir-nya, banner konfirmasi memory muncul, dan limit 20
+memicu notifikasi Lanjut / Prompt baru.
+
 ## Verifikasi
 - **M1 build: BERHASIL.** Run `44469382067` (commit `1c7e164`), APK 9.696.391
   bytes, 8 dex, signed v2 `CN=Android Debug`. Copy lokal: `~/novaagent-debug.apk`.
