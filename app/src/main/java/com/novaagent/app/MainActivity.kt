@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.novaagent.app.ui.ChatScreen
 import com.novaagent.app.ui.ChatViewModel
@@ -22,6 +23,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             NovaAgentTheme { Root() }
         }
+    }
 }
 
 private enum class Screen { Permissions, Chat, Settings }
@@ -29,23 +31,22 @@ private enum class Screen { Permissions, Chat, Settings }
 @Composable
 private fun Root() {
     val vm: ChatViewModel = viewModel()
-    val prefs = androidx.compose.ui.platform.LocalContext.current
-        .getSharedPreferences("novaagent", 0)
+    val prefs = LocalContext.current.getSharedPreferences("novaagent", 0)
     var screen by remember {
         mutableStateOf(if (prefs.getBoolean("onboarded", false)) Screen.Chat else Screen.Permissions)
     }
 
-    BackHandler(enabled = screen == Screen.Settings) { screen = Screen.Chat }
+    BackHandler(enabled = screen == Screen.Settings) {
+        vm.reloadLanguage()
+        screen = Screen.Chat
+    }
 
     when (screen) {
         Screen.Permissions -> PermissionScreen(onDone = {
             prefs.edit().putBoolean("onboarded", true).apply()
             screen = Screen.Chat
         })
-        Screen.Chat -> ChatScreen(
-            vm = vm,
-            onOpenSettings = { screen = Screen.Settings },
-        )
+        Screen.Chat -> ChatScreen(vm = vm, onOpenSettings = { screen = Screen.Settings })
         Screen.Settings -> SettingsScreen(onBack = {
             vm.reloadLanguage()
             screen = Screen.Chat
