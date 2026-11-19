@@ -384,3 +384,73 @@ eksplisit (`androidx.compose.foundation.layout.systemBars` / `.ime` / `.union`);
   arm64-v8a ada, `extractNativeLibs` true, tidak ada string termux di manifest).
 - Interrupt/retry/delete sesi belum diuji.
 - Header spasi keyboard belum dilihat di layar.
+
+## M6 — selesai (Termux-only, revert, draft session, i18n)
+
+Status: **green**. Run CI `44620530788`, commit remote `afc03a8`.
+APK debug **17,522,859 B**, sha256
+`201244bbf8900603925e8bf4fe18db2076499d80c06b5fc8c56aa9fd577d3224`.
+
+### Shell: Termux asli (bukan busybox)
+- `bridge/TermuxBridge.kt` kembali ke `com.termux.RUN_COMMAND` +
+  `com.termux.app.RunCommandService`. Fire-and-forget, output ditulis ke
+  `filesDir/termux-run/<id>/{out.txt,code.txt}` lalu dipoll.
+- Manifest: `com.termux.permission.RUN_COMMAND` + `<queries><package com.termux/>`.
+  **Termux:API tidak dipakai** — itu hanya untuk sensor/notifikasi/kamera;
+  `RUN_COMMAND` ada di Termux inti.
+- Syarat sekali di Termux: `allow-external-apps=true` di
+  `~/.termux/termux.properties`, lalu restart Termux.
+- `run_shell` sekarang tool utama: parameter `command`, `cwd` (opsional),
+  `timeout_ms` (maks 3.600.000). Deskripsinya menyebut ls/git/python/pkg tersedia.
+- Whitelist path `read_file`/`write_file`/`list_dir` kembali ke world Termux:
+  `/sdcard`, `/storage/emulated/0`, `/storage/self/primary`, Termux HOME,
+  Termux `usr/tmp`, `/data/local/tmp`. `run_shell` sengaja tanpa batas.
+- Default workdir `/sdcard/novaagent` (`Workspace.DEFAULT_TERMUX_DIR`).
+- Busybox `jniLibs/*.so` masih ada di repo tapi tidak dipakai lagi.
+
+### Interrupt
+- Bug lama: `break` di tengah batch tool call membuat tool result hilang dari
+  history → provider menolak request berikutnya.
+- Sekarang: batch diselesaikan penuh dulu (command yang sedang jalan selesai),
+  baru loop berhenti di boundary. `TurnResult.interrupted = true`.
+
+### Revert (pengganti delete prompt)
+- `data/Snapshots.kt`: git. Tiap turn ambil commit workdir sebelum agent jalan
+  (`git add -A` + `commit --allow-empty`), hash disimpan di `messages.snapshot`
+  (Room v3, migrasi 2→3).
+- Revert = `git checkout <hash> -- .` + `git clean -fd` + hapus pesan itu dan
+  sesudahnya. Repo di-init otomatis kalau workdir belum git.
+- Tombol Revert hanya di bubble user; bubble assistant tetap punya Delete.
+
+### Sesi draft
+- App buka dengan `sessionId = 0`: halaman utama, welcome kalimat random
+  (`I18n.welcome`), tidak ada row di DB.
+- Sesi baru dibuat saat prompt pertama dikirim; judul dari
+  `SessionTitle.fromPrompt()` (buang kata filler ID/EN, ambil klausa pertama,
+  maks 60 char).
+- Drawer "Sesi baru" hanya kembali ke draft (`startDraft()`).
+- App bar menampilkan `sessionTitle`, bukan "NovaAgent".
+
+### i18n
+- `data/I18n.kt`: peta string ID/EN + `I18n.t()`; pilihan bahasa di Settings,
+  langsung berlaku. System prompt dapat `## Response language` dari
+  `I18n.promptRule()`.
+
+### Animasi / ikon
+- Back di Settings = `Icons.AutoMirrored.Filled.ArrowBack` yang bergeser -6dp
+  saat ditekan (`collectIsPressedAsState` + `animateDpAsState`).
+- TopAppBar Settings collapse on scroll (`enterAlwaysScrollBehavior`).
+- Baris aksi bubble masuk dengan fade + expand, offset -4→0.
+- Welcome fade-in.
+
+### Jebakan terulang
+- Patch Python dengan `"\n"` di dalam string Kotlin menghasilkan newline literal
+  dan merusak file; pakai patch tool atau raw string.
+- `SharedPreferences.putString(...)` tanpa `.edit()` tidak ada → `editor()`.
+- Menulis ulang file lewat patch dengan indentasi berbeda = replace gagal diam-diam;
+  setelah patch besar, grep nama fungsinya.
+
+### Belum terverifikasi di device
+- Termux menerima RUN_COMMAND (butuh allow-external-apps di sisi user).
+- Revert benar-benar mengembalikan file.
+- Draft → sesi baru saat prompt pertama.
