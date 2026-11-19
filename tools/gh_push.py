@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -18,7 +19,7 @@ TOKEN = os.environ["GH_TOKEN"]
 WORKDIR = os.path.expanduser("~/novaagent")
 
 
-def api(method, path, payload=None):
+def api(method, path, payload=None, attempts=3):
     body = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
         "https://api.github.com" + path,
@@ -32,12 +33,18 @@ def api(method, path, payload=None):
             "Content-Type": "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as f:
-            raw = f.read()
-            return f.status, (json.loads(raw) if raw else {})
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode()[:600]
+    last = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as f:
+                raw = f.read()
+                return f.status, (json.loads(raw) if raw else {})
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode()[:600]
+        except Exception as e:  # socket timeouts and DNS blips on mobile networks
+            last = e
+            time.sleep(3 * (attempt + 1))
+    raise SystemExit("api %s %s failed after %d attempts: %s" % (method, path, attempts, last))
 
 
 def git(*args, binary=False):
