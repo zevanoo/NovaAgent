@@ -258,3 +258,58 @@ memicu notifikasi Lanjut / Prompt baru.
 - Git lokal tanpa `remote-http` helper; `curl` rusak
   (`cannot locate symbol ngtcp2_crypto_get_path_challenge_data2_cb`); `ssh` tidak ada.
 - Tidak dikerjakan — semua build lewat GitHub Actions.
+
+## M5 — selesai (skills, workdir rework, UI/UX, font)
+
+Status: **green**. Run CI `44560790563`, commit remote `c0a4f1f`.
+APK debug **10,709,123 B**, sha256
+`c018034812590b066e92d356a97920c6717ec5e3b1bac2b12a94e206b6964c30`.
+
+### Workdir (dirombak sesuai koreksi user)
+- Setting hanya **satu**: `defaultDir` (folder induk). Tidak ada main/project workdir lagi.
+- `Workspace.kt` menyimpan `sessionDirs` sebagai peta `id=path` di SharedPreferences;
+  `resolve(context, sessionId)` mengembalikan folder sesi, fallback ke default.
+- Folder sesi dibuat **lazy** oleh `AgentService` lewat Termux `RunCommandService`
+  saat tool pertama yang menulis dipanggil (`write_file`, `run_shell`, `save_memory`).
+  Tool read-only tetap di default dir → chat tanpa tulis tidak bikin folder kosong.
+- Nama folder: `<slug topik sesi>` di bawah default dir; dibuat sekali, disimpan di pref.
+- Workdir terlihat di header chat (chip) — `AgentState.sessionDir` +
+  `AgentState.workdirVersion` untuk invalidasi tanpa buka Settings.
+
+### Skill (M5 inti)
+- `data/Skills.kt`: tiga root — `<workdir>/.novaagent/skills`, `filesDir/skills`,
+  `filesDir/bundled-skills`. Frontmatter YAML minimal (name, description) di-parse sendiri.
+- `index()` → nama + deskripsi (`name — desc`), `body()` → isi SKILL.md penuh.
+- System prompt (`MemoryFiles.systemPrompt`) memuat `## Skill tersedia` berisi indeks +
+  instruksi memanggil `use_skill` dulu sebelum mengerjakan task yang cocok.
+- Tool baru `use_skill(name)` di `AgentTools`; body masuk transcript sebagai tool result.
+- Settings: daftar skill + tombol Hapus; install manual = taruh folder di `filesDir/skills`.
+
+### UI/UX
+- `ui/theme/Theme.kt` ditulis ulang: ColorScheme gelap/terang (slate dalam, primary
+  hijau `0xFF7DD3A0`), `Spacing` tokens, typography dari `AppFonts`.
+- `ui/ChatScreen.kt` ditulis ulang total (539 baris) gaya Claude Android:
+  header ringkas + chip workdir, baris tool/thought **collapsible** di bawah turn user,
+  banner memory pending + banner limit, composer `imePadding`, tombol kirim dim saat kosong.
+- `ui/Markdown.kt` baru: bold/italic/inline code/fenced code (scroll horizontal),
+  `SelectionContainer`.
+- `ui/SettingsScreen.kt` ditulis ulang: Provider, Workdir (satu field), Tampilan (font),
+  Skill, Batas agent, Memory, Termux. Hanya yang tersedia.
+
+### Font
+- Asset bawaan: `assets/fonts/{body,heading,mono}/` → Inter, Inter Tight, JetBrains Mono.
+- `ui/theme/AppFonts.kt`: peran `body`/`heading`/`mono`; override user di
+  `filesDir/fonts/<role>/`; `install()` (salin dari SAF picker) / `reset()`.
+  Typeface di-cache per key file+mtime; folder user diutamakan di atas asset.
+- **Jebakan**: `androidx.compose.ui.text.font.Font("path")` hanya untuk `res/font`,
+  BUKAN asset → `Typeface.createFromAsset()` lalu `FontFamily(typeface)`.
+- **Jebakan**: regex inline markdown harus raw string Kotlin (`"""`),
+  `\n`/`\*` di string biasa = `Unsupported escape sequence`.
+- **Jebakan**: `AnnotatedString.Builder.withStyle` tidak ada; pakai
+  `builder.addStyle(style, start, end)`.
+- **Jebakan**: `TextOverflow.MiddleEllipsis` tidak ada di compose versi ini → `Ellipsis`.
+
+### Sisa / belum terverifikasi di device
+- Belum ada uji di perangkat sejak M4: skill index benar sampai ke model, `use_skill`
+  mengembalikan body, font user benar-benar terpakai, folder sesi terbentuk.
+- API key masih di memori proses (EncryptedSharedPreferences belum).
