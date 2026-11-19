@@ -313,3 +313,74 @@ APK debug **10,709,123 B**, sha256
 - Belum ada uji di perangkat sejak M4: skill index benar sampai ke model, `use_skill`
   mengembalikan body, font user benar-benar terpakai, folder sesi terbentuk.
 - API key masih di memori proses (EncryptedSharedPreferences belum).
+
+
+## M5fix — Termux dihapus, M3, aksi chat, crash
+
+Status: **green**. Run CI `44573429036`, commit remote `354fb2d`.
+APK debug **17,497,755 B** (naik karena busybox + icons-extended), sha256
+`76a7486d62490e129c4015094c07cd41189828f7b66970d1530b9e22da97bfec`.
+
+### Termux dan Termux:API: DIHAPUS TOTAL
+- `bridge/TermuxBridge.kt` sekarang cuma fasad tipis ke `shell/LocalShell.kt`.
+  Tidak ada intent ke `com.termux`, tidak ada `RUN_COMMAND`, tidak ada
+  `allow-external-apps`, tidak ada izin `com.termux.permission.RUN_COMMAND`.
+- Shell = busybox Termux yang **dibundel di APK**:
+  `jniLibs/arm64-v8a/libbusybox-bin.so` + `libbusybox.so`, `libselinux.so`,
+  `libpcre2-8.so`. Diambil dari paket Termux (busybox 1.38.0-1, pcre2 10.49,
+  libandroid-selinux 14.0.0.11) lewat
+  `https://packages.termux.dev/apt/termux-main/pool/...`.
+- **Jebakan**: Android 10+ hanya boleh `exec` dari `applicationInfo.nativeLibraryDir`,
+  dan hanya file bernama `lib*.so` yang diekstrak ke sana. Karena itu binary
+  di-rename `libbusybox-bin.so` dan `packaging { jniLibs { useLegacyPackaging = true } }`
+  + `android:extractNativeLibs="true"` wajib ada.
+- **Jebakan**: DT_NEEDED bawaan paket Termux menunjuk path prefix Termux dan
+  soname versi (`libbusybox.so.1.38.0`, `libandroid-selinux.so`). Tanpa patchelf:
+  replace byte string di file dengan nama lebih pendek + padding NUL. Nama final:
+  `libbusybox.so`, `libselinux.so`, `libpcre2-8.so`. `LD_LIBRARY_PATH` di-set ke
+  `nativeLibraryDir` saat exec.
+- Applet dipanggil `busybox sh <script>`, bukan symlink (tidak bisa `ln` di
+  nativeLibraryDir).
+
+### Path dan data
+- `data/AppFiles.kt`: dua root — `filesDir/home` (sandbox, tanpa izin) dan
+  `/sdcard/Android/media/com.novaagent.app` (terbaca file manager, tanpa izin).
+- Default workdir = `/sdcard/Android/media/com.novaagent.app`. Folder sesi dibuat
+  lazy di dalamnya.
+- Whitelist path `AgentTools` sekarang root app, bukan `/sdcard` global.
+- Manifest: `MANAGE_EXTERNAL_STORAGE`, `QUERY_ALL_PACKAGES`, `<queries>`,
+  semua izin Termux dihapus.
+
+### UI
+- Tema M3 polos + dynamic color (Android 12+); **font sistem**, tidak ada
+  `assets/fonts`, tidak ada `AppFonts.kt`, tidak ada picker font di Settings.
+- `ChatScreen.kt` pakai komponen M3: TopAppBar, Card/Surface, FilledTonalIconButton,
+  TextButton, AlertDialog, ModalDrawerSheet.
+- **Bug spasi keyboard**: `imePadding()` dipasang di Column yang sudah kena inset
+  Scaffold → keyboard dihitung dua kali. Fix: Scaffold konsumsi app bar saja,
+  composer pegang `windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))`.
+- Aksi chat: Stop (matikan service), Interrupt (`AgentState.interrupt`, loop berhenti
+  di antara tool call), Retry (hapus pesan itu dan sesudahnya, jalankan ulang),
+  Delete pesan, Delete sesi.
+- `PermissionScreen.kt` muncul sekali di launch pertama (`onboarded` di prefs):
+  notifikasi, info folder, tombol pengaturan baterai. **Tidak** minta storage luas.
+
+### Crash "prompt ke-3"
+- Penyebab paling mungkin: `HttpURLConnection.setRequestProperty("Authorization", …)`
+  melempar `IllegalArgumentException` untuk byte non-ASCII (API key paste dengan
+  spasi/zero-width/smart quote), dan exception itu lolos dari `catch (Exception)`
+  di service. Sekarang key difilter ke ASCII printable (`'!'..'~'`), catch jadi
+  `Throwable` + ditulis sebagai pesan error ke Room, jarang lagi mematikan proses.
+- `AgentService` mencatat error ke transcript sebagai baris "Error: …" supaya
+  kegagalan tidak hilang tanpa jejak.
+
+### Kompilasi Kotlin: jebakan impor extension Compose
+`WindowInsets.systemBars`, `.ime`, `.union` adalah **extension** dan butuh impor
+eksplisit (`androidx.compose.foundation.layout.systemBars` / `.ime` / `.union`);
+`WindowInsets` sendiri tidak cukup.
+
+### Belum terverifikasi di device
+- busybox benar-benar exec di HP (build hijau, isi APK sudah dicek: 4 file lib/
+  arm64-v8a ada, `extractNativeLibs` true, tidak ada string termux di manifest).
+- Interrupt/retry/delete sesi belum diuji.
+- Header spasi keyboard belum dilihat di layar.
