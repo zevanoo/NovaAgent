@@ -13,7 +13,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -38,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.core.content.ContextCompat
 import com.novaagent.app.bridge.TermuxBridge
 import com.novaagent.app.data.AgentState
+import com.novaagent.app.data.I18n
 import com.novaagent.app.data.AppFiles
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
@@ -74,13 +84,30 @@ fun SettingsScreen(onBack: () -> Unit) {
     val workdir = Workspace.defaultDir(context)
     val skills = remember(skillEpoch, workdir) { Skills.all(context, workdir) }
 
+    val topBarScroll = androidx.compose.material3.TopAppBarDefaults.enterAlwaysScrollBehavior()
+    var langEpoch by remember { mutableStateOf(0) }
+    val currentLang = remember(langEpoch) { I18n.current(context) }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Kembali") } },
+                title = { Text(I18n.t(context, "settings")) },
+                navigationIcon = {
+                    // The arrow slides left while pressed instead of being a static glyph.
+                    val interaction = remember { MutableInteractionSource() }
+                    val pressed by interaction.collectIsPressedAsState()
+                    val shift by animateDpAsState(if (pressed) (-6).dp else 0.dp, label = "backShift")
+                    IconButton(onClick = onBack, interactionSource = interaction) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = I18n.t(context, "back"),
+                            modifier = Modifier.offset(x = shift),
+                        )
+                    }
+                },
+                scrollBehavior = topBarScroll,
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 ),
             )
         },
@@ -121,6 +148,23 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Settings.update(ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim()))
                 onBack()
             }) { Text("Simpan") }
+
+            Divider()
+
+            Section(I18n.t(context, "language"))
+            I18n.languages().forEach { (code, label) ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = currentLang == code,
+                        onClick = {
+                            I18n.set(context, code)
+                            langEpoch++
+                            onBack()
+                        },
+                    )
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
 
             Divider()
 

@@ -31,6 +31,8 @@ data class Message(
     val createdAt: Long,
     /** JSON array of tool rounds, UI-only: rendered as collapsible rows under the user message. */
     val rounds: String = "",
+    /** Git commit of the workdir taken just before this turn ran; used by revert. */
+    val snapshot: String = "",
 )
 
 @Dao
@@ -56,6 +58,15 @@ interface ChatDao {
 
     @Query("DELETE FROM messages WHERE sessionId = :id")
     suspend fun clearMessages(id: Long)
+
+    @Query("UPDATE messages SET snapshot = :hash WHERE id = :id")
+    suspend fun setSnapshot(id: Long, hash: String)
+
+    @Query("SELECT snapshot FROM messages WHERE id = :id")
+    suspend fun snapshotOf(id: Long): String?
+
+    @Query("SELECT id FROM messages WHERE sessionId = :sid AND role = 'user' ORDER BY id DESC LIMIT 1")
+    suspend fun lastUserMessageId(sid: Long): Long?
 
     @Query("SELECT content FROM messages WHERE sessionId = :id AND role = 'user' ORDER BY id")
     suspend fun contents(id: Long): List<String>
@@ -83,7 +94,7 @@ interface ChatDao {
     suspend fun deleteSessionMessages(id: Long)
 }
 
-@Database(entities = [Session::class, Message::class], version = 2, exportSchema = false)
+@Database(entities = [Session::class, Message::class], version = 3, exportSchema = false)
 abstract class ChatDb : RoomDatabase() {
     abstract fun chat(): ChatDao
 
@@ -98,10 +109,17 @@ abstract class ChatDb : RoomDatabase() {
             }
         }
 
+        /** v3 adds `messages.snapshot` for revert. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN snapshot TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun of(context: Context): ChatDb = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, ChatDb::class.java, "novaagent.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
     }
 }

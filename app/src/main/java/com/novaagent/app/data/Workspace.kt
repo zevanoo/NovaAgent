@@ -6,19 +6,22 @@ import android.content.Context
  * Working directory resolution.
  *
  * One setting, [defaultDir]: the root new sessions get a folder under. Default
- * value is the app's own browsable media dir (`/sdcard/Android/media/<pkg>`), so
- * the app works with no permission prompt and files stay visible to the user.
+ * is `/sdcard/novaagent`, which Termux can read and write and the user can browse
+ * from any file manager.
  *
  * Each session gets `<root>/<title slug>`; the agent creates it lazily on the
  * first write, so read-only chats do not litter the disk.
  */
 object Workspace {
+    /** Shared storage is visible to Termux and to every file manager. */
+    const val DEFAULT_TERMUX_DIR = "/sdcard/novaagent"
+
     private const val P_DEFAULT = "workdirDefault"
     private const val P_SESSION_DIR = "sessionDirs" // "id=path" lines
 
     fun defaultDir(context: Context): String {
         val stored = prefs(context).getString(P_DEFAULT, "").orEmpty().trim()
-        return stored.ifBlank { AppFiles.media(context).absolutePath }
+        return stored.ifBlank { DEFAULT_TERMUX_DIR }
     }
 
     fun setDefaultDir(context: Context, path: String) {

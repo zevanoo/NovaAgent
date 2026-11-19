@@ -23,6 +23,7 @@ import com.novaagent.app.data.ChatDb
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Message
+import com.novaagent.app.data.Snapshots
 import com.novaagent.app.data.Workspace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -103,7 +104,9 @@ class AgentService : Service() {
             val dao = ChatDb.of(this@AgentService).chat()
             try {
                 val session = dao.session(sessionId)
-                val title = dao.contents(sessionId).firstOrNull()?.take(60) ?: "sesi-$sessionId"
+                val title = session?.title?.takeIf { it.isNotBlank() && it != NEW_TITLE }
+                    ?: dao.contents(sessionId).firstOrNull()?.take(60)
+                    ?: "sesi-$sessionId"
                 val defaultDir = Workspace.defaultDir(this@AgentService)
 
                 // One setting only: the default root. The agent gives each session its
@@ -137,6 +140,20 @@ class AgentService : Service() {
                 val history = buildHistory(dao, sessionId, continueThread)
                 val prompt = MemoryFiles.systemPrompt(this@AgentService, workdir)
                 val maxRounds = Limits.maxRounds(this@AgentService)
+
+                // Snapshot the workdir before the turn touches anything, so revert can
+                // put files back exactly as they were.
+                val lastUser = dao.lastUserMessageId(sessionId)
+                val snapshot = runCatching {
+                    Snapshots.capture(
+                        this@AgentService,
+                        workdir,
+                        "before turn",
+                    )
+                }.getOrNull()
+                if (lastUser != null && snapshot != null) {
+                    dao.setSnapshot(lastUser, snapshot)
+                }
 
                 val result = AgentLoop.run(
                     context = this@AgentService,

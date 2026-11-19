@@ -39,6 +39,8 @@ data class UiMessage(
     val role: String,
     val text: String,
     val rounds: List<UiRound> = emptyList(),
+    /** Git commit of the workdir before this turn; blank when there was none. */
+    val snapshot: String = "",
 )
 
 /** One tool call rendered under the user turn; tap toggles result, tap thought toggles detail. */

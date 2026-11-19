@@ -22,15 +22,20 @@ import java.io.File
 object AgentTools {
 
     /**
-     * Paths the app may touch. With no Termux there is no shared filesystem to
-     * protect: everything the shell can see is already app-private, plus the one
-     * media dir Android gives this app. Anything else is refused so a wrong path
-     * fails loudly instead of writing somewhere the user cannot find.
+     * Paths `read_file` / `write_file` / `list_dir` may touch.
+     *
+     * Commands run inside Termux, so the filesystem here is Termux's, not the
+     * app sandbox: home, the shared storage tree, and Termux's own tmp. The list
+     * exists so a typo fails loudly instead of writing somewhere the user cannot
+     * find; `run_shell` is deliberately unrestricted since it is the escape hatch.
      */
-    private fun allowedRoots(context: Context): List<String> = listOf(
-        AppFiles.home(context).absolutePath,
-        AppFiles.media(context).absolutePath,
-        context.cacheDir.absolutePath,
+    private val allowedRoots = listOf(
+        "/sdcard",
+        "/storage/emulated/0",
+        "/storage/self/primary",
+        "/data/data/com.termux/files/home",
+        "/data/data/com.termux/files/usr/tmp",
+        "/data/local/tmp",
     )
 
     val defs: String = JSONArray().apply {
@@ -129,7 +134,7 @@ object AgentTools {
             "read_file" -> readFile(context, args.optString("path"), args, dir)
             "write_file" -> writeFile(context, args.optString("path"), args.optString("content"), dir)
             "list_dir" -> listDir(context, args.optString("path"), dir)
-            "run_shell" -> runShell(context, args.optString("command"), timeoutMs, dir)
+            "run_shell" -> runShell(context, args, timeoutMs, dir)
             "save_memory" -> saveMemory(context, args.optString("target"), args.optString("note"), dir)
             "use_skill" -> Skills.body(context, dir, args.optString("name"))
             else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell, save_memory, use_skill."
@@ -171,19 +176,27 @@ object AgentTools {
         return if (entries.isBlank()) "(kosong) ${f.path}" else entries
     }
 
-    private fun runShell(context: Context, command: String, timeoutMs: Int, cwd: String): String {
+    private fun runShell(context: Context, args: JSONObject, timeoutMs: Int, cwd: String): String {
+        val command = args.optString("command")
+        if (command.isBlank()) return "Error: command kosong."
+        val where = args.optString("cwd").trim().ifBlank { cwd }
         val capMb = Limits.memoryCapMb(context)
-        // ulimit -v takes KB. Without a cap, one runaway command can get the whole
-        // app OOM-killed by the system; with it, the command dies instead.
-        val wrapped = if (capMb > 0) "ulimit -v ${capMb * 1024} 2>/dev/null; $command" else command
-        val r = TermuxBridge.run(context, wrapped, timeoutMs.coerceIn(1_000, 3_600_000), cwd)
+
+        // ulimit -v takes KB. Without a cap one runaway command can get the whole
+        // app OOM-killed by the system; with it, only the command dies.
+        val body = if (capMb > 0) "ulimit -v ${capMb * 1024} 2>/dev/null; $command" else command
+
+        // The banner tells the model where the command ran, so a relative-path
+        // mistake is obvious instead of mysterious.
+        val banner = if (where.isBlank()) "" else "cwd: $where\n"
+        val r = TermuxBridge.run(context, body, timeoutMs.coerceIn(1_000, 3_600_000), where)
         return when {
             r.error != null -> "Error: ${r.error}"
-            r.exitCode == 0 -> r.output.ifBlank { "(selesai, tanpa output)" }
+            r.exitCode == 0 -> banner + r.output.ifBlank { "(selesai, tanpa output)" }
             r.exitCode == 137 || r.output.contains("Cannot allocate memory") ->
                 "Error: perintah dihentikan karena melewati batas memori $capMb MB " +
                     "(naikkan di Settings kalau memang butuh).\n${r.output}".trim()
-            else -> "exit ${r.exitCode}\n${r.output}".take(MAX_OUTPUT + 40)
+            else -> banner + "exit ${r.exitCode}\n${r.output}".take(MAX_OUTPUT + 40)
         }
     }
 
@@ -208,7 +221,7 @@ object AgentTools {
     }
 
     private fun resolve(context: Context, path: String, workdir: String): File {
-        val home = AppFiles.home(context).absolutePath
+        val home = TERMUX_HOME
         val raw = path.trim().ifBlank { workdir }
         val expanded = when {
             raw == "~" -> home
@@ -218,11 +231,12 @@ object AgentTools {
             else -> "$home/$raw"
         }
         val f = File(expanded).canonicalFile
-        if (allowedRoots(context).none { f.path == it || f.path.startsWith("$it/") }) {
-            throw SecurityException("Path di luar area app: ${f.path}")
+        if (allowedRoots.none { f.path == it || f.path.startsWith("$it/") }) {
+            throw SecurityException("Path di luar area yang diizinkan: ${f.path}")
         }
         return f
     }
+    private const val TERMUX_HOME = "/data/data/com.termux/files/home"
     private const val MAX_OUTPUT = 8_000
 }
 
@@ -236,6 +250,8 @@ data class TurnResult(
     val hitLimit: Boolean,
     /** Provider-shaped history after the turn, so the next turn keeps the thread. */
     val history: List<JSONObject>,
+    /** True when the user stopped it: a normal partial result, not an error. */
+    val interrupted: Boolean = false,
 )
 
 /**
@@ -263,13 +279,16 @@ object AgentLoop {
         var used = 0
 
         while (used < maxRounds) {
-            // Soft interrupt: stop between steps, keep what is already done.
+            // Interrupt boundary: only between batches, never mid-batch. A tool
+            // batch the provider already committed to must be answered in full or
+            // the next request is rejected for missing tool results.
             if (AgentState.interrupt.value) {
                 return TurnResult(
-                    text = "Dihentikan. Sebagian pekerjaan sudah tersimpan; kirim prompt untuk melanjutkan.",
+                    text = interruptedText(rounds),
                     rounds = rounds,
                     hitLimit = false,
                     history = prune(messages),
+                    interrupted = true,
                 )
             }
             val response = LlmClient.chatWithTools(
@@ -289,7 +308,6 @@ object AgentLoop {
 
             messages.add(response.raw)
             for (call in response.toolCalls) {
-                if (AgentState.interrupt.value) break
                 used++
                 val timeout = if (call.arguments.has("timeout_ms")) {
                     call.arguments.optInt("timeout_ms", commandTimeoutMs)
@@ -305,6 +323,17 @@ object AgentLoop {
                 onTool(round)
                 if (used >= maxRounds) break
             }
+            // The user may have pressed interrupt while that command was running.
+            // Every result is already in `messages`, so stopping here is safe.
+            if (AgentState.interrupt.value) {
+                return TurnResult(
+                    text = interruptedText(rounds),
+                    rounds = rounds,
+                    hitLimit = false,
+                    history = prune(messages),
+                    interrupted = true,
+                )
+            }
         }
 
         return TurnResult(
@@ -315,6 +344,11 @@ object AgentLoop {
             history = prune(messages),
         )
     }
+
+    /** What the transcript shows when the user stopped the turn. */
+    private fun interruptedText(rounds: List<ToolRound>): String =
+        if (rounds.isEmpty()) "Dihentikan sebelum ada langkah yang berjalan."
+        else "Dihentikan setelah ${rounds.size} langkah. Hasil di atas tetap tersimpan."
 
     /** Keeps the provider request bounded: trim the middle, keep the opening context. */
     private fun prune(messages: List<JSONObject>): List<JSONObject> {

@@ -22,7 +22,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             NovaAgentTheme { Root() }
         }
-    }
 }
 
 private enum class Screen { Permissions, Chat, Settings }
@@ -43,7 +42,13 @@ private fun Root() {
             prefs.edit().putBoolean("onboarded", true).apply()
             screen = Screen.Chat
         })
-        Screen.Chat -> ChatScreen(vm = vm, onOpenSettings = { screen = Screen.Settings })
-        Screen.Settings -> SettingsScreen(onBack = { screen = Screen.Chat })
+        Screen.Chat -> ChatScreen(
+            vm = vm,
+            onOpenSettings = { screen = Screen.Settings },
+        )
+        Screen.Settings -> SettingsScreen(onBack = {
+            vm.reloadLanguage()
+            screen = Screen.Chat
+        })
     }
 }

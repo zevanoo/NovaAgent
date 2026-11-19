@@ -1,6 +1,7 @@
 package com.novaagent.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -75,7 +78,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.novaagent.app.data.AgentState
+import com.novaagent.app.data.I18n
 import com.novaagent.app.data.UiMessage
 import com.novaagent.app.data.UiRound
 import com.novaagent.app.ui.theme.Spacing
@@ -95,6 +100,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     val messages by vm.messages.collectAsState()
+    val context = LocalContext.current
+    val t: (String) -> String = { key -> I18n.t(context, key) }
     val sessions by vm.sessions.collectAsState()
     val busy by vm.busy.collectAsState()
     val status by vm.status.collectAsState()
@@ -112,7 +119,10 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     val listState = rememberLazyListState()
     var draft by remember { mutableStateOf("") }
     var showWorkdir by remember { mutableStateOf(false) }
-    var deleteTarget by remember { mutableStateOf<UiMessage?>(null) }
+    var revertTarget by remember { mutableStateOf<UiMessage?>(null) }
+    var toast by remember { mutableStateOf("") }
+    val lang by vm.lang.collectAsState()
+    val title by vm.sessionTitle.collectAsState()
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
@@ -126,9 +136,9 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     Modifier.fillMaxWidth().padding(Spacing.lg),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Sesi", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(t("sessions"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     FilledTonalIconButton(onClick = { vm.newSession(); scope.launch { drawer.close() } }) {
-                        Icon(Icons.Default.Add, contentDescription = "Sesi baru")
+                        Icon(Icons.Default.Add, contentDescription = t("new_session"))
                     }
                 }
                 HorizontalDivider()
@@ -159,7 +169,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                                 ) {
                                     Icon(
                                         Icons.Default.Delete,
-                                        contentDescription = "Hapus sesi",
+                                        contentDescription = t("delete_session"),
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }
@@ -178,7 +188,12 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     ),
                     title = {
                         Column {
-                            Text("NovaAgent", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                title.ifBlank { t("title") },
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Text(
                                 "@ $workdir",
                                 style = monoStyle(11),
@@ -191,12 +206,12 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawer.open() } }) {
-                            Icon(Icons.Default.Menu, contentDescription = "Sesi")
+                            Icon(Icons.Default.Menu, contentDescription = t("sessions"))
                         }
                     },
                     actions = {
                         IconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                            Icon(Icons.Default.Settings, contentDescription = t("settings"))
                         }
                     },
                 )
@@ -216,13 +231,14 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     ),
                     verticalArrangement = Arrangement.spacedBy(Spacing.md),
                 ) {
-                    if (messages.isEmpty()) item { EmptyState() }
+                    if (messages.isEmpty()) item { Welcome(vm.welcome, t) }
                     items(messages, key = { it.id }) { m ->
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                             Bubble(
                                 message = m,
                                 onRetry = { vm.retry(m) },
-                                onDelete = { deleteTarget = m },
+                                onRevert = { revertTarget = m },
+                                t = t,
                             )
                             if (m.rounds.isNotEmpty()) ToolRows(m.rounds)
                         }
@@ -232,7 +248,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 error?.let { msg ->
                     Banner(
                         text = msg,
-                        actionLabel = "Tutup",
+                        actionLabel = t("close"),
                         onAction = vm::clearError,
                     )
                 }
@@ -240,19 +256,19 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 pendingMemory.forEach { item ->
                     Banner(
                         text = "Simpan ke ${item.target}: ${item.note.take(70)}",
-                        actionLabel = "Simpan",
+                        actionLabel = t("save_memory"),
                         onAction = { vm.resolvePending(item.target, approve = true) },
-                        secondaryLabel = "Tolak",
+                        secondaryLabel = t("reject_memory"),
                         onSecondary = { vm.resolvePending(item.target, approve = false) },
                     )
                 }
 
                 if (limitHit != null) {
                     Banner(
-                        text = "Batas putaran tool tercapai.",
-                        actionLabel = "Lanjut",
+                        text = t("limit_banner"),
+                        actionLabel = t("continue"),
                         onAction = vm::continueTurn,
-                        secondaryLabel = "Prompt baru",
+                        secondaryLabel = t("new_prompt"),
                         onSecondary = { vm.dismissLimit(); vm.newSession() },
                     )
                 }
@@ -265,14 +281,14 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(Spacing.sm))
                         Text(
-                            status.ifBlank { "Berjalan..." },
+                            status.ifBlank { t("thinking") },
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = vm::interruptTurn) { Text("Interrupt") }
-                        TextButton(onClick = vm::stopTurn) { Text("Stop") }
+                        TextButton(onClick = vm::interruptTurn) { Text(t("interrupt")) }
+                        TextButton(onClick = vm::stopTurn) { Text(t("stop")) }
                     }
                 }
 
@@ -282,36 +298,67 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     busy = busy,
                     onSend = { vm.send(draft); draft = "" },
                     onStop = vm::stopTurn,
+                    t = t,
                 )
             }
         }
     }
 
-    if (showWorkdir) WorkdirDialog(vm, workdir, onDismiss = { showWorkdir = false })
-    deleteTarget?.let { target ->
+    if (showWorkdir) WorkdirDialog(vm, workdir, onDismiss = { showWorkdir = false }, t = t)
+    revertTarget?.let { target ->
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("Hapus pesan?") },
-            text = { Text(target.text.take(120)) },
-            confirmButton = {
-                TextButton(onClick = { vm.deleteMessage(target); deleteTarget = null }) { Text("Hapus") }
+            onDismissRequest = { revertTarget = null },
+            title = { Text(t("revert_title")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Text(target.text.take(140), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        t("revert_body") + " " + t("revert_files"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Batal") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    val m = target
+                    revertTarget = null
+                    vm.revertPrompt(m) { note -> toast = note }
+                }) { Text(t("revert")) }
+            },
+            dismissButton = { TextButton(onClick = { revertTarget = null }) { Text(t("cancel")) } },
+        )
+    }
+
+    if (toast.isNotBlank()) {
+        AlertDialog(
+            onDismissRequest = { toast = "" },
+            title = { Text(t("revert")) },
+            text = { Text(toast) },
+            confirmButton = { TextButton(onClick = { toast = "" }) { Text(t("close")) } },
         )
     }
 }
 
+/** Landing page of a not-yet-created session: a random greeting, nothing stored. */
 @Composable
-private fun EmptyState() {
+private fun Welcome(welcome: String, t: (String) -> String) {
+    var shown by remember(welcome) { mutableStateOf(false) }
+    val alpha by animateFloatAsState(if (shown) 1f else 0f, label = "welcomeAlpha")
+    LaunchedEffect(welcome) { shown = true }
+
     Column(
-        Modifier.fillMaxWidth().padding(top = 72.dp, start = Spacing.xl, end = Spacing.xl),
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 72.dp, start = Spacing.xl, end = Spacing.xl)
+            .alpha(alpha),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
-        Text("NovaAgent", style = MaterialTheme.typography.headlineSmall)
+        Text(t("empty_title"), style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Agent di Android. Ketik /help untuk daftar command.",
-            style = MaterialTheme.typography.bodyMedium,
+            welcome.ifBlank { t("empty_body") },
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
@@ -329,6 +376,7 @@ private fun Composer(
     busy: Boolean,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    t: (String) -> String,
 ) {
     val enabled = !busy && value.isNotBlank()
     val sendAlpha by animateFloatAsState(if (enabled) 1f else 0.35f, label = "sendAlpha")
@@ -359,7 +407,7 @@ private fun Composer(
                 decorationBox = { inner ->
                     if (value.isEmpty()) {
                         Text(
-                            "Tanya atau ketik /help",
+                            t("composer_hint"),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -375,7 +423,7 @@ private fun Composer(
             ) {
                 Icon(
                     if (busy) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                    contentDescription = if (busy) "Stop" else "Kirim",
+                    contentDescription = if (busy) t("stop") else t("send"),
                 )
             }
         }
@@ -414,23 +462,27 @@ private fun Banner(
 }
 
 @Composable
-private fun WorkdirDialog(vm: ChatViewModel, current: String, onDismiss: () -> Unit) {
+private fun WorkdirDialog(
+    vm: ChatViewModel,
+    current: String,
+    onDismiss: () -> Unit,
+    t: (String) -> String,
+) {
     var manual by remember { mutableStateOf(vm.defaultWorkdir()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Workdir") },
+        title = { Text(t("workdir")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Text("Sesi ini", style = MaterialTheme.typography.labelMedium)
+                Text(t("this_session"), style = MaterialTheme.typography.labelMedium)
                 Text(current, style = monoStyle(12), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
-                    "Folder per sesi dibuat otomatis oleh agent di dalam default workdir " +
-                        "saat pertama kali menulis file.",
+                    t("default_workdir"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 HorizontalDivider()
-                Text("Default workdir", style = MaterialTheme.typography.labelMedium)
+                Text(t("default_workdir"), style = MaterialTheme.typography.labelMedium)
                 BasicTextField(
                     value = manual,
                     onValueChange = { manual = it },
@@ -445,9 +497,9 @@ private fun WorkdirDialog(vm: ChatViewModel, current: String, onDismiss: () -> U
             }
         },
         confirmButton = {
-            TextButton(onClick = { vm.setDefaultWorkdir(manual); onDismiss() }) { Text("Simpan") }
+            TextButton(onClick = { vm.setDefaultWorkdir(manual); onDismiss() }) { Text(t("save")) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(t("cancel")) } },
     )
 }
 
@@ -529,8 +581,16 @@ private fun ToolRow(r: UiRound) {
  * Each bubble carries its own actions: retry re-runs that turn, delete drops it.
  */
 @Composable
-private fun Bubble(message: UiMessage, onRetry: () -> Unit, onDelete: () -> Unit) {
+private fun Bubble(
+    message: UiMessage,
+    onRetry: () -> Unit,
+    onRevert: () -> Unit,
+    t: (String) -> String,
+) {
     var showActions by remember(message.id) { mutableStateOf(false) }
+    // Actions slide in instead of popping, and the row remembers its own state so
+    // scrolling the transcript does not reset what the user opened.
+    val actionShift by animateDpAsState(if (showActions) 0.dp else (-4).dp, label = "actionShift")
 
     Column(
         Modifier
@@ -561,21 +621,35 @@ private fun Bubble(message: UiMessage, onRetry: () -> Unit, onDelete: () -> Unit
             MarkdownText(message.text, Modifier.fillMaxWidth())
         }
 
-        AnimatedVisibility(visible = showActions, enter = fadeIn(), exit = fadeOut()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        AnimatedVisibility(
+            visible = showActions,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                modifier = Modifier.offset(y = actionShift),
+            ) {
                 if (message.role == "user") {
-                    MessageAction("Retry", Icons.Default.Refresh, onRetry)
+                    MessageAction(t("retry"), Icons.Default.Refresh, onRetry, t)
+                    MessageAction(t("revert"), Icons.Default.Undo, onRevert, t)
+                } else {
+                    MessageAction(t("delete"), Icons.Default.Delete, onRevert, t)
                 }
-                MessageAction("Hapus", Icons.Default.Delete, onDelete)
             }
         }
     }
 }
 
 @Composable
-private fun MessageAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+private fun MessageAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    t: (String) -> String,
+) {
     TextButton(onClick = onClick) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+        Icon(icon, contentDescription = label, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(Spacing.xs))
         Text(label, style = MaterialTheme.typography.labelSmall)
     }

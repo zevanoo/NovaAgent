@@ -82,7 +82,7 @@ object MemoryFiles {
         parts.append(soul.trim()).append("\n\n")
 
         read(globalFile(context, USER))?.takeIf { it.isNotBlank() }?.let {
-            parts.append("## Tentang user\n").append(trim(it)).append("\n\n")
+            parts.append("## About the user\n").append(trim(it)).append("\n\n")
         }
 
         val slug = if (workdir.isBlank()) null else slugOf(workdir)
@@ -91,18 +91,28 @@ object MemoryFiles {
             ?.takeIf { it.isFile }?.let { read(it) }?.takeIf { it.isNotBlank() }
 
         if (projectNote != null) {
-            parts.append("## Konteks project (${projectName(workdir)})\n").append(trim(projectNote)).append("\n\n")
+            parts.append("## Project context (${projectName(workdir)})\n")
+                .append(trim(projectNote)).append("\n\n")
         }
+
+        parts.append("## Working directory\n")
+            .append(if (workdir.isBlank()) "(not set)" else workdir)
+            .append("\n\n")
 
         // Skills are listed, not inlined: only name + description go in the prompt;
         // the body is fetched with use_skill when the model decides it applies.
         val skillIndex = Skills.index(context, workdir)
         if (skillIndex.isNotBlank()) {
-            parts.append("## Skill tersedia\n")
-                .append("Panggil tool `use_skill` dengan nama skill untuk membaca instruksinya sebelum memakainya.\n")
+            parts.append("## Available skills\n")
+                .append("Call `use_skill` with a skill name to read its instructions before applying it.\n")
                 .append(skillIndex)
                 .append("\n")
         }
+
+        parts.append("## Response language\n")
+            .append(I18n.promptRule(context))
+            .append("\n")
+
         return Prompt(text = parts.toString().trim(), projectSlug = slug, hasProjectNote = projectNote != null)
     }
 

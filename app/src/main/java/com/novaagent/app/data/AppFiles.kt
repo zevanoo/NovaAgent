@@ -7,15 +7,10 @@ import java.io.File
 /**
  * Where the app keeps things.
  *
- * Two roots only:
- * - [home] — the shell's working area, inside the app sandbox. No permission
- *   needed, wiped on uninstall.
- * - [media] — the same tree mirrored under `/sdcard/Android/media/<pkg>/`, which
- *   any file manager or Termux can read. Android creates that folder for us on
- *   install, so no storage permission is required to write own-files there.
- *
- * Sessions live under `<root>/projects/<slug>`; skills, memory and fonts stay in
- * the sandbox because they are app state, not user documents.
+ * Commands run in Termux, so the files the user cares about live on shared
+ * storage: [media] (`/sdcard/Android/media/<pkg>`) holds exchange files and the
+ * Termux scratch dir. [home] is the app sandbox, used only for app state (skills
+ * installed from Settings, caches) that Termux never needs to see.
  */
 object AppFiles {
 

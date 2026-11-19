@@ -13,7 +13,10 @@ import com.novaagent.app.data.ChatDb
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Message
+import com.novaagent.app.data.I18n
 import com.novaagent.app.data.Session
+import com.novaagent.app.data.SessionTitle
+import com.novaagent.app.data.Snapshots
 import com.novaagent.app.data.Settings
 import com.novaagent.app.data.Skills
 import com.novaagent.app.data.UiMessage
@@ -104,10 +107,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val limitHit = AgentState.limitHit
 
     init {
-        val last = prefs.getLong("sessionId", 0L)
+        welcome = I18n.welcome(app)
         viewModelScope.launch {
+            // Reopen the last session only if it has messages; an empty one was a
+            // draft that never became real, so the user lands on a fresh draft.
+            val last = prefs.getLong("sessionId", 0L)
             val existing = if (last != 0L) dao.session(last) else null
-            if (existing != null) open(existing.id) else newSession()
+            if (existing != null && dao.messages(last).isNotEmpty()) open(last) else startDraft()
             sessions.value = dao.sessions()
         }
         var seen = AgentState.turnDone.value
@@ -137,12 +143,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         AgentState.limitHit.value = null
         AgentState.sessionDir.value = Workspace.sessionDir(getApplication(), id)
         messages.value = render(dao.messages(id))
+        sessionTitle.value = dao.title(id).orEmpty()
+    }
+
+    /** Back to the landing page: no session row exists while the draft is open. */
+    fun startDraft() {
+        sessionId = 0L
+        welcome = I18n.welcome(getApplication())
+        messages.value = emptyList()
+        sessionTitle.value = ""
+        AgentState.limitHit.value = null
+        AgentState.sessionDir.value = Workspace.defaultDir(getApplication())
+        AgentState.workdirVersion.value += 1
+        prefs.edit().remove("sessionId").apply()
     }
 
     private suspend fun reload() {
         val id = sessionId
         if (id == 0L) return
         messages.value = render(dao.messages(id))
+        sessionTitle.value = dao.title(id).orEmpty()
         sessions.value = dao.sessions()
     }
 
@@ -175,14 +195,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrDefault(emptyList())
     }
 
-    fun newSession() = viewModelScope.launch {
-        val now = System.currentTimeMillis()
-        val id = dao.insertSession(
-            Session(title = "Sesi baru", createdAt = now, updatedAt = now, workdir = "")
-        )
-        open(id)
-        sessions.value = dao.sessions()
-    }
+    /** "New session" in the drawer just goes back to the landing page. */
+    fun newSession() = startDraft()
 
     fun openSession(id: Long) = viewModelScope.launch { open(id); sessions.value = dao.sessions() }
 
@@ -196,6 +210,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (busy.value) return
         viewModelScope.launch {
             AgentState.error.value = null
+            // First prompt on the draft page is what creates the session, so no
+            // empty row ever reaches the drawer.
+            if (sessionId == 0L) {
+                val now = System.currentTimeMillis()
+                val id = dao.insertSession(
+                    Session(
+                        title = SessionTitle.fromPrompt(text),
+                        createdAt = now,
+                        updatedAt = now,
+                        workdir = "",
+                    )
+                )
+                open(id)
+            }
             addTurn("user", text)
             persist("user", text)
             AgentService.startTurn(getApplication(), sessionId)
@@ -208,6 +236,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         AgentState.limitHit.value = null
         AgentState.error.value = null
         AgentService.continueTurn(getApplication(), sessionId)
+    }
+
+    /** Re-reads the language after Settings changed it. */
+    fun reloadLanguage() {
+        lang.value = I18n.current(getApplication())
+        if (sessionId == 0L) welcome = I18n.welcome(getApplication())
     }
 
     fun dismissLimit() {
@@ -242,11 +276,41 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (index < 0) return@launch
         // The prompt to replay is the user row at or before the tapped message.
         val prompt = rows.take(index + 1).lastOrNull { it.role == "user" } ?: return@launch
+        // Files the prompt changed are left alone here; retry only replays it.
         dao.deleteMessagesFrom(id, prompt.id)
         AgentState.error.value = null
         AgentState.limitHit.value = null
         reload()
         AgentService.startTurn(getApplication(), id)
+    }
+
+    /**
+     * Revert one prompt: undo every file change made by that turn, then drop the
+     * prompt and everything after it. The snapshot is the git commit taken just
+     * before the turn ran, so "undo" is a checkout rather than a guess.
+     */
+    fun revertPrompt(message: UiMessage, onResult: (String) -> Unit = {}) = viewModelScope.launch {
+        if (busy.value) return@launch
+        val app = getApplication<Application>()
+        val id = sessionId
+        val rows = dao.messages(id)
+        val index = rows.indexOfFirst { it.id == message.id }
+        if (index < 0) return@launch
+        val prompt = rows.take(index + 1).lastOrNull { it.role == "user" } ?: return@launch
+
+        val workdir = Workspace.resolve(app, id)
+        val snapshot = prompt.snapshot
+        val note = withContext(Dispatchers.IO) {
+            when {
+                workdir.isBlank() -> "Error: workdir belum ada."
+                snapshot.isBlank() -> "Tidak ada snapshot file; hanya pesan yang dihapus."
+                else -> Snapshots.restore(app, workdir, snapshot)
+            }
+        }
+        onResult(note)
+        dao.deleteMessagesFrom(id, prompt.id)
+        AgentState.limitHit.value = null
+        reload()
     }
 
     fun deleteMessage(message: UiMessage) = viewModelScope.launch {
@@ -262,7 +326,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         sessions.value = remaining
         if (id == sessionId) {
             val next = remaining.firstOrNull()
-            if (next != null) open(next.id) else newSession()
+            if (next != null) open(next.id) else startDraft()
         }
     }
 
@@ -275,8 +339,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun persist(role: String, text: String) {
         val id = sessionId
         dao.insertMessage(Message(sessionId = id, role = role, content = text, createdAt = System.currentTimeMillis()))
-        val title = messages.value.firstOrNull { it.role == "user" }?.text?.take(40) ?: "Sesi baru"
+        // The title was set from the first prompt when the session was created;
+        // later turns only move it up the list.
+        val title = sessionTitle.value.ifBlank { SessionTitle.fromPrompt(text) }
         dao.touchSession(id, title, System.currentTimeMillis())
+        sessionTitle.value = title
     }
 
     private fun appendSystem(text: String) = addTurn("assistant", text)
