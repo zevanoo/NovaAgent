@@ -34,4 +34,4 @@ object Settings {
     }
 }
 
-data class UiMessage(val role: String, val text: String)
+data class UiMessage(val id: Long, val role: String, val text: String)

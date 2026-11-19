@@ -110,7 +110,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(messages) { Bubble(it) }
+                    items(messages, key = { it.id }) { Bubble(it) }
                 }
 
                 error?.let { msg ->
@@ -156,29 +156,41 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
 @Composable
 private fun Bubble(m: UiMessage) {
     val isUser = m.role == "user"
+    val isTool = m.role == "tool"
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
         Box(
             Modifier
-                .widthIn(max = 320.dp)
+                .widthIn(max = if (isTool) 300.dp else 320.dp)
                 .background(
-                    if (isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    RoundedCornerShape(14.dp),
+                    when {
+                        isUser -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                        isTool -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    },
+                    RoundedCornerShape(if (isTool) 8.dp else 14.dp),
                 )
-                .padding(12.dp),
+                .padding(horizontal = 12.dp, vertical = if (isTool) 6.dp else 12.dp),
         ) {
-            SelectionContainer {
+            if (isTool) {
                 Text(
                     m.text,
-                    style = if (m.text.contains("```")) {
-                        MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                    } else {
-                        MaterialTheme.typography.bodyMedium
-                    },
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            } else {
+                SelectionContainer {
+                    Text(
+                        m.text,
+                        style = if (m.text.contains("```")) {
+                            MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                        } else {
+                            MaterialTheme.typography.bodyMedium
+                        },
+                    )
+                }
             }
         }
     }

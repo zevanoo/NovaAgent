@@ -9,6 +9,14 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- Termux RUN_COMMAND: the intent never leaves the device, but the permission
+         is required for com.termux.app.RunCommandService to accept it. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+    <!-- Commands exchange their output through /sdcard/novaagent/run, which the app
+         must be able to read and delete. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <queries>
         <package android:name="com.termux" />
