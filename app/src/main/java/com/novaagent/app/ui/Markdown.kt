@@ -120,7 +120,7 @@ private fun annotated(text: String): AnnotatedString {
     return out.toAnnotatedString()
 }
 
-private val INLINE = Regex("`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*")
+private val INLINE = Regex("""`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*""")
 
 @Composable
 private fun CodeBlock(language: String, body: String) {
