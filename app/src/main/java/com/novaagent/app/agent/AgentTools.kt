@@ -27,7 +27,7 @@ object AgentTools {
     val defs: String = JSONArray().apply {
         put(tool(
             "read_file",
-            "Baca file teks. Path boleh absolut (di /sdcard atau $HOME Termux) " +
+            "Baca file teks. Path boleh absolut (di /sdcard atau HOME Termux) " +
                 "atau relatif ke working directory sesi.",
             JSONObject().apply {
                 prop("path", "string", "Path file")
@@ -168,7 +168,9 @@ object AgentLoop {
     ): String {
         val messages = ArrayList(history)
         repeat(MAX_ROUNDS) { round ->
-            val response = LlmClient.chatWithTools(Settings.config.value, messages, system, AgentTools.defs)
+            val response = LlmClient.chatWithTools(
+                com.novaagent.app.data.Settings.config.value, messages, system, AgentTools.defs,
+            )
 
             val text = response.content.trim()
             if (response.toolCalls.isEmpty()) {
