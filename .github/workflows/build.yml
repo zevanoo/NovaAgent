@@ -16,12 +16,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
       - name: Accept licenses and install packages
         run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          SDK=$ANDROID_HOME/cmdline-tools/latest/bin
+          yes | "$SDK/sdkmanager" --licenses > /dev/null
+          "$SDK/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
