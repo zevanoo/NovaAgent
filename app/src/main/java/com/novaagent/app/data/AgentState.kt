@@ -24,4 +24,10 @@ object AgentState {
 
     /** Bumped when the agent queued a memory write under the confirm policy. */
     val pendingMemory = MutableStateFlow(0)
+
+    /** Session folder the agent created on its last turn; blank until it writes something. */
+    val sessionDir = MutableStateFlow("")
+
+    /** Bumped when the header's workdir label should be recomputed. */
+    val workdirVersion = MutableStateFlow(0)
 }

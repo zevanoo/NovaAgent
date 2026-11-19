@@ -18,7 +18,7 @@ data class Session(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
-    /** Per-session working directory override; blank falls through to project/main. */
+    /** Folder the agent created for this session; blank until the first write. */
     val workdir: String = "",
 )
 
@@ -47,8 +47,6 @@ interface ChatDao {
     @Query("UPDATE sessions SET title = :title, updatedAt = :at WHERE id = :id")
     suspend fun touchSession(id: Long, title: String, at: Long)
 
-    @Query("UPDATE sessions SET workdir = :workdir WHERE id = :id")
-    suspend fun setSessionWorkdir(id: Long, workdir: String)
 
     @Query("SELECT * FROM messages WHERE sessionId = :id ORDER BY id")
     suspend fun messages(id: Long): List<Message>
@@ -64,6 +62,12 @@ interface ChatDao {
 
     @Query("SELECT content FROM messages WHERE sessionId = :id AND role = 'assistant' ORDER BY id DESC LIMIT 1")
     suspend fun lastAssistant(id: Long): String?
+
+    @Query("SELECT title FROM sessions WHERE id = :id")
+    suspend fun title(id: Long): String?
+
+    @Query("UPDATE sessions SET workdir = :workdir WHERE id = :id")
+    suspend fun setWorkdir(id: Long, workdir: String)
 }
 
 @Database(entities = [Session::class, Message::class], version = 2, exportSchema = false)

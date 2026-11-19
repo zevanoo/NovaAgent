@@ -5,6 +5,7 @@ import com.novaagent.app.bridge.TermuxBridge
 import com.novaagent.app.data.AgentState
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
+import com.novaagent.app.data.Skills
 import com.novaagent.app.net.LlmClient
 import com.novaagent.app.net.ToolCall
 import org.json.JSONArray
@@ -64,6 +65,14 @@ object AgentTools {
             listOf("command"),
         ))
         put(tool(
+            "use_skill",
+            "Muat isi skill. System prompt hanya memuat daftar nama+deskripsi; panggil " +
+                "tool ini untuk membaca instruksi lengkapnya sebelum mengerjakan task " +
+                "yang cocok dengan skill tersebut.",
+            JSONObject().apply { prop("name", "string", "Nama skill dari daftar") },
+            listOf("name"),
+        ))
+        put(tool(
             "save_memory",
             "Simpan catatan ke memory. target=USER (preferensi user, berlaku semua project), " +
                 "SOUL (persona agent), atau PROJECT (konteks mendalam project aktif, hanya " +
@@ -102,14 +111,23 @@ object AgentTools {
         args: JSONObject,
         workdir: String,
         timeoutMs: Int = DEFAULT_COMMAND_TIMEOUT_MS,
+        ensureSessionDir: () -> String = { workdir },
     ): String = try {
+        // Mutating tools get the session's own project folder, created on first use.
+        // Read-only tools stay on the default dir so a question does not create a folder.
+        val dir = if (name == "write_file" || name == "run_shell" || name == "save_memory") {
+            ensureSessionDir().ifBlank { workdir }
+        } else {
+            workdir
+        }
         when (name) {
-            "read_file" -> readFile(args.optString("path"), args, workdir)
-            "write_file" -> writeFile(args.optString("path"), args.optString("content"), workdir)
-            "list_dir" -> listDir(args.optString("path"), workdir)
+            "read_file" -> readFile(args.optString("path"), args, dir)
+            "write_file" -> writeFile(args.optString("path"), args.optString("content"), dir)
+            "list_dir" -> listDir(args.optString("path"), dir)
             "run_shell" -> runShell(context, args.optString("command"), timeoutMs)
-            "save_memory" -> saveMemory(context, args.optString("target"), args.optString("note"), workdir)
-            else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell, save_memory."
+            "save_memory" -> saveMemory(context, args.optString("target"), args.optString("note"), dir)
+            "use_skill" -> Skills.body(context, dir, args.optString("name"))
+            else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell, save_memory, use_skill."
         }
     } catch (e: Exception) {
         "Error: " + (e.message ?: e.javaClass.simpleName)
@@ -233,6 +251,7 @@ object AgentLoop {
         workdir: String,
         maxRounds: Int,
         commandTimeoutMs: Int = AgentTools.DEFAULT_COMMAND_TIMEOUT_MS,
+        ensureSessionDir: () -> String = { workdir },
         onTool: (ToolRound) -> Unit,
     ): TurnResult {
         val messages = ArrayList(history)
@@ -263,7 +282,9 @@ object AgentLoop {
                 } else {
                     commandTimeoutMs
                 }
-                val result = AgentTools.execute(context, call.name, call.arguments, workdir, timeout)
+                val result = AgentTools.execute(
+                    context, call.name, call.arguments, workdir, timeout, ensureSessionDir,
+                )
                 messages.add(toolResultMessage(call.id, result))
                 val round = ToolRound(call.name, summarize(call.arguments), text, result)
                 rounds += round

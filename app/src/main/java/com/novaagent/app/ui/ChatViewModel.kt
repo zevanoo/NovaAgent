@@ -15,6 +15,7 @@ import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Message
 import com.novaagent.app.data.Session
 import com.novaagent.app.data.Settings
+import com.novaagent.app.data.Skills
 import com.novaagent.app.data.UiMessage
 import com.novaagent.app.data.UiRound
 import com.novaagent.app.data.Workspace
@@ -40,45 +41,42 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("novaagent", 0)
     private var seq = 0L
 
-    private val sysPrompt: String
-        get() = MemoryFiles.systemPrompt(getApplication(), workdir).text
-
-    /** Resolved workdir for the open session; setting it writes the session tier only. */
-    var workdir: String
-        get() = sessionWorkdir.ifBlank { Workspace.resolve(getApplication()) }
-        set(value) {
-            sessionWorkdir = value.trim()
-            val id = sessionId
-            if (id != 0L) viewModelScope.launch {
-                dao.setSessionWorkdir(id, sessionWorkdir)
-                if (sessionWorkdir.isNotBlank()) Workspace.remember(getApplication(), sessionWorkdir)
-            }
-        }
-
-    var sessionWorkdir by mutableStateOf("")
-        private set
-
-    /** Which tier produced [workdir] — "sesi" / "project" / "main" / "HOME Termux". */
     val pendingMemory = AgentState.pendingMemory
 
     /** Memory writes the agent queued and the user has not answered yet. */
     fun pendingWrites(): List<MemoryFiles.Pending> = MemoryFiles.pending(getApplication())
 
-    fun workdirSource(): String = when {
-        sessionWorkdir.isNotBlank() -> "sesi"
-        else -> Workspace.source(getApplication())
+    /** Folder the open session works in; the agent creates it on first write. */
+    fun workdirLabel(): String = Workspace.display(getApplication(), sessionId)
+
+    /** Re-read the folder label after a turn: the agent may have just created one. */
+    fun refreshWorkdir() {
+        AgentState.sessionDir.value = Workspace.sessionDir(getApplication(), sessionId)
     }
 
-    fun promotedWorkdir(): String = Workspace.main(getApplication())
+    fun defaultWorkdir(): String = Workspace.defaultDir(getApplication())
 
-    fun projectWorkdir(): String = Workspace.project(getApplication())
+    fun setDefaultWorkdir(path: String) {
+        Workspace.setDefaultDir(getApplication(), path)
+        bumpWorkdir()
+    }
 
-    fun setProjectWorkdir(path: String) = Workspace.setProject(getApplication(), path)
+    /** Invalidate the header labels after the agent created a folder or the user changed the default. */
+    private fun bumpWorkdir() {
+        AgentState.workdirVersion.value += 1
+    }
 
-    fun setMainWorkdir(path: String) = Workspace.setMain(getApplication(), path)
+    fun skills(): List<Skills.Skill> = Skills.all(getApplication(), Workspace.resolve(getApplication(), sessionId))
 
-    /** Folders offered in the session picker: projects seen so far. */
-    fun knownWorkdirs(): List<String> = Workspace.known(getApplication())
+    fun skillStatus(): String {
+        val list = skills()
+        return if (list.isEmpty()) {
+            "Belum ada skill terpasang.\nInstal lewat Settings → Skill, atau taruh folder skill di " +
+                File(getApplication<Application>().filesDir, "skills").absolutePath
+        } else {
+            list.joinToString("\n") { "• ${it.name} — ${it.description.take(90)}" }
+        }
+    }
 
     var sessionId by mutableStateOf(0L)
         private set
@@ -121,8 +119,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun open(id: Long) {
         sessionId = id
         prefs.edit().putLong("sessionId", id).apply()
-        sessionWorkdir = dao.session(id)?.workdir.orEmpty()
         AgentState.limitHit.value = null
+        AgentState.sessionDir.value = Workspace.sessionDir(getApplication(), id)
         messages.value = render(dao.messages(id))
     }
 
@@ -239,12 +237,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     "Ubah di tombol ⚙ di kanan atas."
             )
             "/memory" -> memoryCommand(arg)
-            "/skill" -> appendSystem(skillList())
+            "/skill" -> appendSystem(skillStatus())
             "/termux" -> {
-                if (arg.isNotBlank()) workdir = arg
+                if (arg.isNotBlank()) setDefaultWorkdir(arg)
                 appendSystem(
                     TermuxBridge.status(getApplication()) +
-                        "\nWorking dir: ${workdir.ifBlank { "(HOME Termux)" }} (dari ${workdirSource()})" +
+                        "\nWorkdir sesi: ${workdirLabel()}" +
                         "\nBatas memori command: " + Limits.describeMemory(getApplication()) +
                         "\nBatas putaran tool per turn: " + Limits.maxRounds(getApplication())
                 )
@@ -284,7 +282,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 )
             )
             val summary = withContext(Dispatchers.IO) {
-                LlmClient.chat(Settings.config.value, history, sysPrompt)
+                LlmClient.chat(Settings.config.value, history, MemoryFiles.systemPrompt(getApplication(), Workspace.resolve(getApplication(), id)).text)
             }
             dao.clearMessages(id)
             dao.insertMessage(
@@ -311,25 +309,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun memoryCommand(arg: String) = viewModelScope.launch {
         val app = getApplication<Application>()
+        val id = sessionId
         val parts = arg.trim().split(Regex("\\s+"), limit = 2)
         val head = parts.getOrNull(0)?.lowercase().orEmpty()
         val rest = parts.getOrNull(1)?.trim().orEmpty()
         val text = withContext(Dispatchers.IO) {
             when {
-                arg.isBlank() -> MemoryFiles.status(app, workdir) + pendingSummary(app)
+                arg.isBlank() -> MemoryFiles.status(app, Workspace.resolve(app, id)) + pendingSummary(app)
                 head == "approve" -> MemoryFiles.confirmPending(app, rest.uppercase())
                 head == "reject" -> {
                     MemoryFiles.rejectPending(app, rest.uppercase())
                     "Ditolak: catatan $rest tidak disimpan."
                 }
                 head == "edit" -> {
-                    val (file, body) = MemoryFiles.readTarget(app, workdir, rest)
+                    val (file, body) = MemoryFiles.readTarget(app, Workspace.resolve(app, id), rest)
                         ?: return@withContext "Error: target harus SOUL, USER, atau PROJECT."
                     "Edit langsung di Settings → Memory, atau salin isi file:\n${file.path}\n\n$body"
                 }
                 head == "soul" || head == "user" || head == "project" -> {
                     if (rest.isBlank()) "Error: isi catatan kosong. Contoh: /memory user suka Kotlin"
-                    else MemoryFiles.append(app, workdir, head, rest)
+                    else MemoryFiles.append(app, Workspace.resolve(app, id), head, rest)
                 }
                 else -> "Error: format /memory [soul|user|project|approve|reject|edit] [teks]"
             }
@@ -357,16 +356,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         AgentState.pendingMemory.value += 1
         appendSystem(result)
-    }
-
-    private fun skillList(): String {
-        val dir = File(getApplication<Application>().filesDir, "skills")
-        val names = dir.listFiles()?.filter { it.isDirectory }?.map { it.name }.orEmpty()
-        return if (names.isEmpty()) {
-            "Belum ada skill terpasang.\nFolder: ${dir.absolutePath}\nLoader skill ada di M5."
-        } else {
-            names.sorted().joinToString("\n") { "• $it" }
-        }
     }
 
     companion object {

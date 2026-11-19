@@ -91,7 +91,17 @@ object MemoryFiles {
             ?.takeIf { it.isFile }?.let { read(it) }?.takeIf { it.isNotBlank() }
 
         if (projectNote != null) {
-            parts.append("## Konteks project (${projectName(workdir)})\n").append(trim(projectNote)).append("\n")
+            parts.append("## Konteks project (${projectName(workdir)})\n").append(trim(projectNote)).append("\n\n")
+        }
+
+        // Skills are listed, not inlined: only name + description go in the prompt;
+        // the body is fetched with use_skill when the model decides it applies.
+        val skillIndex = Skills.index(context, workdir)
+        if (skillIndex.isNotBlank()) {
+            parts.append("## Skill tersedia\n")
+                .append("Panggil tool `use_skill` dengan nama skill untuk membaca instruksinya sebelum memakainya.\n")
+                .append(skillIndex)
+                .append("\n")
         }
         return Prompt(text = parts.toString().trim(), projectSlug = slug, hasProjectNote = projectNote != null)
     }

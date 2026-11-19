@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import com.novaagent.app.MainActivity
 import com.novaagent.app.R
 import com.novaagent.app.agent.AgentLoop
+import com.novaagent.app.bridge.TermuxBridge
 import com.novaagent.app.agent.ToolRound
 import com.novaagent.app.data.AgentState
 import com.novaagent.app.data.ChatDb
@@ -100,8 +101,36 @@ class AgentService : Service() {
             val dao = ChatDb.of(this@AgentService).chat()
             try {
                 val session = dao.session(sessionId)
-                val workdir = session?.workdir?.takeIf { it.isNotBlank() }
-                    ?: Workspace.resolve(this@AgentService)
+                val title = dao.contents(sessionId).firstOrNull()?.take(60) ?: "sesi-$sessionId"
+                val defaultDir = Workspace.defaultDir(this@AgentService)
+
+                // One setting only: the default root. The agent gives each session its
+                // own folder under it, created lazily the first time a tool writes.
+                val workdir = Workspace.resolve(this@AgentService, sessionId).ifBlank { defaultDir }
+                val ensureSessionDir: () -> String = {
+                    val existing = Workspace.sessionDir(this@AgentService, sessionId)
+                    if (existing.isNotBlank()) {
+                        existing
+                    } else if (defaultDir.isBlank()) {
+                        "" // no default dir configured: stay in Termux HOME
+                    } else {
+                        val path = Workspace.projectDirFor(this@AgentService, sessionId, title)
+                        val r = TermuxBridge.run(
+                            this@AgentService,
+                            "mkdir -p '$path' && cd '$path' && pwd",
+                            TIMEOUT_DIR_MS,
+                        )
+                        if (r.exitCode == 0 && r.error == null) {
+                            Workspace.setSessionDir(this@AgentService, sessionId, path)
+                            AgentState.status.value = "workdir: $path"
+                            AgentState.sessionDir.value = path
+                            AgentState.workdirVersion.value += 1
+                            path
+                        } else {
+                            "" // mkdir failed: fall through to the default dir, never abort the turn
+                        }
+                    }
+                }
 
                 val history = buildHistory(dao, sessionId, continueThread)
                 val prompt = MemoryFiles.systemPrompt(this@AgentService, workdir)
@@ -113,6 +142,7 @@ class AgentService : Service() {
                     system = prompt.text,
                     workdir = workdir,
                     maxRounds = maxRounds,
+                    ensureSessionDir = ensureSessionDir,
                     onTool = { round ->
                         roundCount += 1
                         AgentState.status.value = AgentLoop.toolMarker(round.name, round.detail)
@@ -129,15 +159,14 @@ class AgentService : Service() {
                         rounds = encodeRounds(result.rounds),
                     )
                 )
-                val title = dao.contents(sessionId).firstOrNull()?.take(40) ?: "Sesi baru"
-                dao.touchSession(sessionId, title, System.currentTimeMillis())
+                dao.touchSession(sessionId, title.take(40), System.currentTimeMillis())
 
                 // Memory grows with use, not with every turn: only a limit trip is
                 // worth persisting without the model asking (it records where it got stuck).
                 if (result.hitLimit) {
                     MemoryFiles.append(
                         this@AgentService,
-                        workdir,
+                        Workspace.resolve(this@AgentService, sessionId),
                         "PROJECT",
                         "Turn ${sessionId} mencapai batas $maxRounds putaran tool " +
                             "($roundCount tool). Terakhir: ${AgentState.status.value}",
@@ -299,6 +328,7 @@ class AgentService : Service() {
         private const val ACTION_CONTINUE = "com.novaagent.app.CONTINUE_TURN"
         private const val ACTION_NEW_PROMPT = "com.novaagent.app.NEW_PROMPT"
         private const val EXTRA_SESSION = "sessionId"
+        private const val TIMEOUT_DIR_MS = 20_000
 
         fun startTurn(context: Context, sessionId: Long) {
             val intent = Intent(context, AgentService::class.java)
