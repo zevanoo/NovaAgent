@@ -43,7 +43,12 @@ Dibuat:
   saat app dibuka, bukan saat service start.
 
 ## Verifikasi
-- Build debug APK: **BELUM berhasil.** Gradle 8.9 gagal start di Termux fork ini:
+- Repo lokal git sudah diinit (branch `main`, 2 commit, 23 file ter-track).
+  Remote GitHub **belum ada** — user akan menyediakan URL + token.
+- Jalur build dipindah ke GitHub Actions (`.github/workflows/build.yml`);
+  workflow di-pin ke `gradle-version: '8.9'` karena `gradle` dari runner
+  default/apt terlalu tua untuk AGP 8.7.3.
+- Build debug APK lokal: **BELUM berhasil.** Gradle 8.9 gagal start di Termux fork ini:
   `Failed to load native library 'libnative-platform.so' for Linux aarch64`
   (IOException "No such file or directory" saat dlopen). Build-tools aapt2 Android
   juga x86_64, bukan aarch64 → `aapt2` perlu override ke binary Termux.
@@ -55,4 +60,10 @@ Dibuat:
   `/system/etc/security/cacerts`; Gradle harus pakai `GRADLE_OPTS=-Djavax.net.ssl.trustStore=...`.
 - `sdkmanager` tidak bisa unduh manifest (SSL) → platform-35 & build-tools di-extract manual.
 - Butuh: wrapper Gradle yang jalan (buildkit fork) atau patchelf libnative-platform.
+- Root cause terkonfirmasi: `libnative-platform.so` aarch64 ada di jar, tapi butuh
+  `libstdc++.so.6` yang tidak ada di sistem (Android pakai libc++). `ctypes.CDLL`
+  gagal `dlopen: library "libstdc++.so.6" not found` — bukan masalah arsitektur.
+  Fix lokal kalau mau: sediakan `libstdc++.so.6` yang kompatibel (belum dicek pkg
+  Termux mana yang menyediakannya) atau rebuild native-platform dari source.
+  Tidak dikerjakan — build dipindah ke CI.
 
