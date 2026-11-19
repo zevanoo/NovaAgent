@@ -47,11 +47,13 @@ object AppFonts {
             userCache[key] = parsed
             if (parsed != null) return parsed
         }
-        return assetCache.getOrPut(role) {
-            runCatching {
-                val path = assetPaths[role] ?: return@runCatching null
-                Typeface.createFromAsset(context.assets, path)?.let { FontFamily(it) }
-            }.getOrNull() ?: FontFamily.Default
+        return assetCache[role] ?: run {
+            val path = assetPaths[role]
+            val family = if (path == null) FontFamily.Default else
+                runCatching { FontFamily(Typeface.createFromAsset(context.assets, path)) }
+                    .getOrDefault(FontFamily.Default)
+            assetCache[role] = family
+            family
         }
     }
 
