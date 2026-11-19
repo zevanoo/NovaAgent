@@ -76,6 +76,14 @@ object LlmClient {
         return reply.content.ifBlank { throw IOException("Balasan kosong dari provider.") }
     }
 
+    /**
+     * Header values must be printable ASCII. A pasted key with a zero-width space
+     * or a smart quote would otherwise throw from deep inside the connection and
+     * take the whole service process down.
+     */
+    private fun asciiOnly(value: String): String =
+        value.filter { it in '!'..'~' }.trim()
+
     private fun parse(body: String): Reply {
         val root = JSONObject(body)
         val choices = root.optJSONArray("choices")

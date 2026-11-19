@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,15 +24,24 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -58,7 +65,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,8 +78,13 @@ import com.novaagent.app.ui.theme.monoStyle
 import kotlinx.coroutines.launch
 
 /**
- * Claude-app-shaped chat: a quiet top bar that always shows where commands run,
- * one scrolling transcript, and a composer pinned above the keyboard.
+ * Chat surface.
+ *
+ * Insets are owned in exactly one place: the Scaffold consumes system bars and
+ * the composer carries `windowInsetsPadding(WindowInsets.ime)` itself. The old
+ * layout applied `imePadding()` to a Column that had already been inset by the
+ * Scaffold, which counted the keyboard twice and left a full keyboard-height
+ * gap above the composer while typing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +98,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     val pendingVersion by vm.pendingMemory.collectAsState()
     val workdirVersion by AgentState.workdirVersion.collectAsState()
     val sessionDir by AgentState.sessionDir.collectAsState()
+
     val pendingMemory = remember(pendingVersion) { vm.pendingWrites() }
     val workdir = remember(workdirVersion, sessionDir, vm.sessionId) { vm.workdirLabel() }
 
@@ -95,7 +107,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     val listState = rememberLazyListState()
     var draft by remember { mutableStateOf("") }
     var showWorkdir by remember { mutableStateOf(false) }
-    var showSessions by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<UiMessage?>(null) }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
@@ -104,37 +116,49 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
-            ModalDrawerSheet(
-                drawerContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
-            ) {
-                Text(
-                    "Sesi",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(Spacing.lg),
-                )
-                TextButton(
-                    onClick = { vm.newSession(); scope.launch { drawer.close() } },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.sm),
+            ModalDrawerSheet {
+                Row(
+                    Modifier.fillMaxWidth().padding(Spacing.lg),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("+ Sesi baru", color = MaterialTheme.colorScheme.primary)
+                    Text("Sesi", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    FilledTonalIconButton(onClick = { vm.newSession(); scope.launch { drawer.close() } }) {
+                        Icon(Icons.Default.Add, contentDescription = "Sesi baru")
+                    }
                 }
-                HorizontalDivider(Modifier.padding(vertical = Spacing.sm))
+                HorizontalDivider()
                 LazyColumn(Modifier.fillMaxWidth()) {
                     items(sessions, key = { it.id }) { s ->
                         val selected = s.id == vm.sessionId
-                        TextButton(
-                            onClick = { vm.openSession(s.id); scope.launch { drawer.close() } },
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.sm),
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { vm.openSession(s.id); scope.launch { drawer.close() } }
+                                .padding(horizontal = Spacing.lg, vertical = Spacing.md),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
                                 s.title,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = if (selected) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                modifier = Modifier.weight(1f),
                             )
+                            if (selected) {
+                                IconButton(
+                                    onClick = { vm.deleteSession(s.id) },
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Hapus sesi",
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -145,49 +169,56 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
             topBar = {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     ),
                     title = {
-                        Column(Modifier.clickable { showSessions = true }) {
+                        Column {
                             Text("NovaAgent", style = MaterialTheme.typography.titleMedium)
-                            // Working dir is visible without opening Settings.
                             Text(
                                 "@ $workdir",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = monoStyle(11),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .padding(top = 1.dp)
-                                    .clickable { showWorkdir = true },
+                                modifier = Modifier.clickable { showWorkdir = true },
                             )
                         }
                     },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawer.open() } }) {
-                            Text("☰", style = MaterialTheme.typography.titleMedium)
+                            Icon(Icons.Default.Menu, contentDescription = "Sesi")
                         }
                     },
                     actions = {
                         IconButton(onClick = onOpenSettings) {
-                            Text("⚙", style = MaterialTheme.typography.titleMedium)
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
                     },
                 )
             },
         ) { inner ->
-            Column(Modifier.fillMaxSize().padding(inner).imePadding()) {
+            // Scaffold's padding only carries the app bar: the content window is
+            // told not to consume insets, and the composer claims the IME alone.
+            Column(Modifier.fillMaxSize().padding(top = inner.calculateTopPadding())) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.sm),
+                    contentPadding = PaddingValues(
+                        start = Spacing.md,
+                        end = Spacing.md,
+                        top = Spacing.sm,
+                        bottom = Spacing.sm,
+                    ),
                     verticalArrangement = Arrangement.spacedBy(Spacing.md),
                 ) {
                     if (messages.isEmpty()) item { EmptyState() }
                     items(messages, key = { it.id }) { m ->
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            Bubble(m)
+                            Bubble(
+                                message = m,
+                                onRetry = { vm.retry(m) },
+                                onDelete = { deleteTarget = m },
+                            )
                             if (m.rounds.isNotEmpty()) ToolRows(m.rounds)
                         }
                     }
@@ -196,7 +227,6 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 error?.let { msg ->
                     Banner(
                         text = msg,
-                        tone = MaterialTheme.colorScheme.error,
                         actionLabel = "Tutup",
                         onAction = vm::clearError,
                     )
@@ -205,7 +235,6 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 pendingMemory.forEach { item ->
                     Banner(
                         text = "Simpan ke ${item.target}: ${item.note.take(70)}",
-                        tone = MaterialTheme.colorScheme.primary,
                         actionLabel = "Simpan",
                         onAction = { vm.resolvePending(item.target, approve = true) },
                         secondaryLabel = "Tolak",
@@ -216,7 +245,6 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 if (limitHit != null) {
                     Banner(
                         text = "Batas putaran tool tercapai.",
-                        tone = MaterialTheme.colorScheme.tertiary,
                         actionLabel = "Lanjut",
                         onAction = vm::continueTurn,
                         secondaryLabel = "Prompt baru",
@@ -229,20 +257,16 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                         Modifier.fillMaxWidth().padding(horizontal = Spacing.md, vertical = Spacing.xs),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        CircularProgressIndicator(
-                            Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(Spacing.sm))
                         Text(
                             status.ifBlank { "Berjalan..." },
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
                         )
+                        TextButton(onClick = vm::interruptTurn) { Text("Interrupt") }
                         TextButton(onClick = vm::stopTurn) { Text("Stop") }
                     }
                 }
@@ -252,12 +276,23 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     onValueChange = { draft = it },
                     busy = busy,
                     onSend = { vm.send(draft); draft = "" },
+                    onStop = vm::stopTurn,
                 )
             }
-
-            if (showWorkdir) WorkdirDialog(vm, workdir, onDismiss = { showWorkdir = false })
-            if (showSessions) SessionDialog(vm, onDismiss = { showSessions = false })
         }
+    }
+
+    if (showWorkdir) WorkdirDialog(vm, workdir, onDismiss = { showWorkdir = false })
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Hapus pesan?") },
+            text = { Text(target.text.take(120)) },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteMessage(target); deleteTarget = null }) { Text("Hapus") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Batal") } },
+        )
     }
 }
 
@@ -270,7 +305,7 @@ private fun EmptyState() {
     ) {
         Text("NovaAgent", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Coding agent di Android lewat Termux. Ketik /help untuk daftar command.",
+            "Agent di Android. Ketik /help untuk daftar command.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -278,95 +313,103 @@ private fun EmptyState() {
     }
 }
 
-/** Composer: rounded surface, grows to 6 lines, send button dims when unusable. */
+/**
+ * Composer. Claims the IME inset and the navigation bar itself, so it sits right
+ * on top of the keyboard and nothing else has to add padding for it.
+ */
 @Composable
 private fun Composer(
     value: String,
     onValueChange: (String) -> Unit,
     busy: Boolean,
     onSend: () -> Unit,
+    onStop: () -> Unit,
 ) {
     val enabled = !busy && value.isNotBlank()
     val sendAlpha by animateFloatAsState(if (enabled) 1f else 0.35f, label = "sendAlpha")
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
-        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 2.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = Spacing.md, vertical = Spacing.sm)
-            .navigationBarsPadding(),
+            .windowInsetsPadding(
+                androidx.compose.foundation.layout.WindowInsets.systemBars
+                    .union(androidx.compose.foundation.layout.WindowInsets.ime)
+                    .only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal +
+                        androidx.compose.foundation.layout.WindowInsetsSides.Bottom),
+            ),
     ) {
         Row(
-            Modifier.padding(horizontal = Spacing.md, vertical = Spacing.xs),
+            Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
             verticalAlignment = Alignment.Bottom,
         ) {
-            Box(Modifier.weight(1f).heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
-                if (value.isEmpty()) {
-                    Text(
-                        "Tanya atau ketik /help",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    maxLines = 6,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.sm),
-                )
-            }
-            Spacer(Modifier.width(Spacing.sm))
-            Surface(
-                color = MaterialTheme.colorScheme.primary,
-                shape = CircleShape,
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                maxLines = 6,
                 modifier = Modifier
-                    .size(44.dp)
-                    .alpha(sendAlpha)
-                    .clickable(enabled = enabled) { onSend() },
+                    .weight(1f)
+                    .heightIn(min = 44.dp)
+                    .padding(vertical = Spacing.sm),
+                decorationBox = { inner ->
+                    if (value.isEmpty()) {
+                        Text(
+                            "Tanya atau ketik /help",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    inner()
+                },
+            )
+            Spacer(Modifier.width(Spacing.sm))
+            FilledTonalIconButton(
+                onClick = if (busy) onStop else onSend,
+                enabled = busy || enabled,
+                modifier = Modifier.size(44.dp).alpha(if (busy) 1f else sendAlpha),
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("↑", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
-                }
+                Icon(
+                    if (busy) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                    contentDescription = if (busy) "Stop" else "Kirim",
+                )
             }
         }
     }
 }
 
-/** One-line banner with up to two actions: errors, memory confirmation, round cap. */
+/** Inline status row with up to two text actions. */
 @Composable
 private fun Banner(
     text: String,
-    tone: Color,
     actionLabel: String,
     onAction: () -> Unit,
     secondaryLabel: String? = null,
     onSecondary: (() -> Unit)? = null,
 ) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Spacing.md, vertical = Spacing.xs)
-            .background(tone.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
-            .padding(start = Spacing.md, end = Spacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.md, vertical = Spacing.xs),
     ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(vertical = Spacing.sm),
-        )
-        secondaryLabel?.let { label ->
-            TextButton(onClick = { onSecondary?.invoke() }) { Text(label) }
+        Row(
+            Modifier.padding(start = Spacing.md, end = Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(vertical = Spacing.sm),
+            )
+            secondaryLabel?.let { TextButton(onClick = { onSecondary?.invoke() }) { Text(it) } }
+            TextButton(onClick = onAction) { Text(actionLabel, fontWeight = FontWeight.SemiBold) }
         }
-        TextButton(onClick = onAction) { Text(actionLabel, fontWeight = FontWeight.SemiBold) }
     }
 }
 
@@ -408,37 +451,6 @@ private fun WorkdirDialog(vm: ChatViewModel, current: String, onDismiss: () -> U
     )
 }
 
-@Composable
-private fun SessionDialog(vm: ChatViewModel, onDismiss: () -> Unit) {
-    val sessions by vm.sessions.collectAsState()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Pilih sesi") },
-        text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                items(sessions, key = { it.id }) { s ->
-                    TextButton(
-                        onClick = { vm.openSession(s.id); onDismiss() },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            s.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (s.id == vm.sessionId) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { vm.newSession(); onDismiss() }) { Text("Sesi baru") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Tutup") } },
-    )
-}
-
 /** Collapsible tool rows. Row toggles the result; the thought line toggles the reasoning. */
 @Composable
 private fun ToolRows(rounds: List<UiRound>) {
@@ -446,7 +458,7 @@ private fun ToolRows(rounds: List<UiRound>) {
         Modifier.padding(start = Spacing.sm),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        rounds.forEach { r -> ToolRow(r) }
+        rounds.forEach { ToolRow(it) }
     }
 }
 
@@ -456,83 +468,115 @@ private fun ToolRow(r: UiRound) {
     var showThought by remember(r) { mutableStateOf(false) }
     val chevron by animateFloatAsState(if (showResult) 90f else 0f, label = "chevron")
 
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            Modifier.fillMaxWidth().clickable { showResult = !showResult },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                ">",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.rotate(chevron),
-            )
-            Spacer(Modifier.width(Spacing.xs))
-            Text(
-                "${r.name}: ${r.detail}",
-                style = monoStyle(12),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = if (showResult) 4 else 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        if (r.thought.isNotBlank()) {
-            Text(
-                if (showThought) r.thought else "… ${r.thought.lineSequence().first().take(90)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = if (showThought) 12 else 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { showThought = !showThought }
-                    .padding(top = 2.dp),
-            )
-        }
-        AnimatedVisibility(
-            visible = showResult,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-        ) {
-            SelectionContainer {
+        Column(Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm)) {
+            Row(
+                Modifier.fillMaxWidth().clickable { showResult = !showResult },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    r.result,
+                    ">",
                     style = monoStyle(11),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.sm),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.rotate(chevron),
                 )
+                Spacer(Modifier.width(Spacing.xs))
+                Text(
+                    "${r.name}: ${r.detail}",
+                    style = monoStyle(12),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (showResult) 4 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (r.thought.isNotBlank()) {
+                Text(
+                    if (showThought) r.thought else "… ${r.thought.lineSequence().first().take(90)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (showThought) 12 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showThought = !showThought }
+                        .padding(top = 2.dp),
+                )
+            }
+            AnimatedVisibility(
+                visible = showResult,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
+                SelectionContainer {
+                    Text(
+                        r.result,
+                        style = monoStyle(11),
+                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.sm),
+                    )
+                }
             }
         }
     }
 }
 
-/** User turns are tinted bubbles on the right; assistant turns run full width, like Claude. */
+/**
+ * User turns are tinted bubbles on the right; assistant turns run full width.
+ * Each bubble carries its own actions: retry re-runs that turn, delete drops it.
+ */
 @Composable
-private fun Bubble(m: UiMessage) {
-    if (m.role == "user") {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Box(
-                Modifier
-                    .widthIn(max = 320.dp)
-                    .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(18.dp))
-                    .padding(horizontal = Spacing.md, vertical = 10.dp),
-            ) {
-                SelectionContainer {
-                    Text(
-                        m.text,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
+private fun Bubble(message: UiMessage, onRetry: () -> Unit, onDelete: () -> Unit) {
+    var showActions by remember(message.id) { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable { showActions = !showActions },
+    ) {
+        if (message.role == "user") {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Box(
+                    Modifier
+                        .widthIn(max = 320.dp)
+                        .background(
+                            MaterialTheme.colorScheme.primaryContainer,
+                            RoundedCornerShape(18.dp),
+                        )
+                        .padding(horizontal = Spacing.md, vertical = 10.dp),
+                ) {
+                    SelectionContainer {
+                        Text(
+                            message.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
                 }
             }
+        } else {
+            MarkdownText(message.text, Modifier.fillMaxWidth())
         }
-    } else {
-        MarkdownText(m.text, Modifier.fillMaxWidth())
+
+        AnimatedVisibility(visible = showActions, enter = fadeIn(), exit = fadeOut()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                if (message.role == "user") {
+                    MessageAction("Retry", Icons.Default.Refresh, onRetry)
+                }
+                MessageAction("Hapus", Icons.Default.Delete, onDelete)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(Spacing.xs))
+        Text(label, style = MaterialTheme.typography.labelSmall)
     }
 }

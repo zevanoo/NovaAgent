@@ -3,6 +3,7 @@ package com.novaagent.app.agent
 import android.content.Context
 import com.novaagent.app.bridge.TermuxBridge
 import com.novaagent.app.data.AgentState
+import com.novaagent.app.data.AppFiles
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Skills
@@ -20,12 +21,16 @@ import java.io.File
  */
 object AgentTools {
 
-    /** Paths the app may touch, as visible from Termux. Everything else is refused. */
-    private val allowedRoots = listOf(
-        "/sdcard",
-        "/storage/emulated/0",
-        "/data/data/com.termux/files/home",
-        "/data/data/com.termux/files/usr/tmp",
+    /**
+     * Paths the app may touch. With no Termux there is no shared filesystem to
+     * protect: everything the shell can see is already app-private, plus the one
+     * media dir Android gives this app. Anything else is refused so a wrong path
+     * fails loudly instead of writing somewhere the user cannot find.
+     */
+    private fun allowedRoots(context: Context): List<String> = listOf(
+        AppFiles.home(context).absolutePath,
+        AppFiles.media(context).absolutePath,
+        context.cacheDir.absolutePath,
     )
 
     val defs: String = JSONArray().apply {
@@ -121,10 +126,10 @@ object AgentTools {
             workdir
         }
         when (name) {
-            "read_file" -> readFile(args.optString("path"), args, dir)
-            "write_file" -> writeFile(args.optString("path"), args.optString("content"), dir)
-            "list_dir" -> listDir(args.optString("path"), dir)
-            "run_shell" -> runShell(context, args.optString("command"), timeoutMs)
+            "read_file" -> readFile(context, args.optString("path"), args, dir)
+            "write_file" -> writeFile(context, args.optString("path"), args.optString("content"), dir)
+            "list_dir" -> listDir(context, args.optString("path"), dir)
+            "run_shell" -> runShell(context, args.optString("command"), timeoutMs, dir)
             "save_memory" -> saveMemory(context, args.optString("target"), args.optString("note"), dir)
             "use_skill" -> Skills.body(context, dir, args.optString("name"))
             else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell, save_memory, use_skill."
@@ -135,8 +140,8 @@ object AgentTools {
 
     const val DEFAULT_COMMAND_TIMEOUT_MS = 120_000
 
-    private fun readFile(path: String, args: JSONObject, workdir: String): String {
-        val f = resolve(path, workdir)
+    private fun readFile(context: Context, path: String, args: JSONObject, workdir: String): String {
+        val f = resolve(context, path, workdir)
         if (!f.isFile) return "Error: file tidak ditemukan: ${f.path}"
         val lines = f.readLines()
         val offset = (args.optInt("offset", 1)).coerceAtLeast(1)
@@ -150,15 +155,15 @@ object AgentTools {
         }
     }
 
-    private fun writeFile(path: String, content: String, workdir: String): String {
-        val f = resolve(path, workdir)
+    private fun writeFile(context: Context, path: String, content: String, workdir: String): String {
+        val f = resolve(context, path, workdir)
         f.parentFile?.mkdirs()
         f.writeText(content)
         return "OK: ${f.path} ditulis (${content.length} karakter)."
     }
 
-    private fun listDir(path: String, workdir: String): String {
-        val f = resolve(path, workdir)
+    private fun listDir(context: Context, path: String, workdir: String): String {
+        val f = resolve(context, path, workdir)
         if (!f.isDirectory) return "Error: bukan directory: ${f.path}"
         val entries = f.listFiles()?.sortedBy { it.name }?.joinToString("\n") {
             (if (it.isDirectory) "d " else "f ") + it.name
@@ -166,12 +171,12 @@ object AgentTools {
         return if (entries.isBlank()) "(kosong) ${f.path}" else entries
     }
 
-    private fun runShell(context: Context, command: String, timeoutMs: Int): String {
+    private fun runShell(context: Context, command: String, timeoutMs: Int, cwd: String): String {
         val capMb = Limits.memoryCapMb(context)
         // ulimit -v takes KB. Without a cap, one runaway command can get the whole
         // app OOM-killed by the system; with it, the command dies instead.
         val wrapped = if (capMb > 0) "ulimit -v ${capMb * 1024} 2>/dev/null; $command" else command
-        val r = TermuxBridge.run(context, wrapped, timeoutMs.coerceIn(1_000, 3_600_000))
+        val r = TermuxBridge.run(context, wrapped, timeoutMs.coerceIn(1_000, 3_600_000), cwd)
         return when {
             r.error != null -> "Error: ${r.error}"
             r.exitCode == 0 -> r.output.ifBlank { "(selesai, tanpa output)" }
@@ -202,23 +207,22 @@ object AgentTools {
         return MemoryFiles.append(context, workdir, t, note)
     }
 
-    private fun resolve(path: String, workdir: String): File {
+    private fun resolve(context: Context, path: String, workdir: String): File {
+        val home = AppFiles.home(context).absolutePath
         val raw = path.trim().ifBlank { workdir }
         val expanded = when {
-            raw == "~" -> TERMUX_HOME
-            raw.startsWith("~/") -> TERMUX_HOME + raw.removePrefix("~")
+            raw == "~" -> home
+            raw.startsWith("~/") -> home + raw.removePrefix("~")
             raw.startsWith("/") -> raw
             workdir.isNotBlank() -> "$workdir/$raw"
-            else -> raw
+            else -> "$home/$raw"
         }
         val f = File(expanded).canonicalFile
-        if (allowedRoots.none { f.path == it || f.path.startsWith("$it/") }) {
-            throw SecurityException("Path di luar area yang diizinkan: ${f.path}")
+        if (allowedRoots(context).none { f.path == it || f.path.startsWith("$it/") }) {
+            throw SecurityException("Path di luar area app: ${f.path}")
         }
         return f
     }
-
-    private const val TERMUX_HOME = "/data/data/com.termux/files/home"
     private const val MAX_OUTPUT = 8_000
 }
 
@@ -259,6 +263,15 @@ object AgentLoop {
         var used = 0
 
         while (used < maxRounds) {
+            // Soft interrupt: stop between steps, keep what is already done.
+            if (AgentState.interrupt.value) {
+                return TurnResult(
+                    text = "Dihentikan. Sebagian pekerjaan sudah tersimpan; kirim prompt untuk melanjutkan.",
+                    rounds = rounds,
+                    hitLimit = false,
+                    history = prune(messages),
+                )
+            }
             val response = LlmClient.chatWithTools(
                 com.novaagent.app.data.Settings.config.value, messages, system, AgentTools.defs,
             )
@@ -276,6 +289,7 @@ object AgentLoop {
 
             messages.add(response.raw)
             for (call in response.toolCalls) {
+                if (AgentState.interrupt.value) break
                 used++
                 val timeout = if (call.arguments.has("timeout_ms")) {
                     call.arguments.optInt("timeout_ms", commandTimeoutMs)

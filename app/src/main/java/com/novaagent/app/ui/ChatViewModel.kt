@@ -49,6 +49,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Folder the open session works in; the agent creates it on first write. */
     fun workdirLabel(): String = Workspace.display(getApplication(), sessionId)
 
+    /** Opens the session folder in the system file manager, if one is installed. */
+    fun openWorkdir() {
+        val path = workdirLabel()
+        val uri = android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary%3A" +
+            android.net.Uri.encode(path.removePrefix("/storage/emulated/0/")))
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "vnd.android.document/directory")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { getApplication<Application>().startActivity(intent) }
+            .onFailure {
+                AgentState.error.value = "Tidak ada file manager yang bisa membuka $path"
+            }
+    }
+
     /** Re-read the folder label after a turn: the agent may have just created one. */
     fun refreshWorkdir() {
         AgentState.sessionDir.value = Workspace.sessionDir(getApplication(), sessionId)
@@ -199,12 +214,56 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         AgentState.limitHit.value = null
     }
 
+    /** Hard stop: kills the running turn and the service that owns it. */
     fun stopTurn() {
         val context = getApplication<Application>()
         context.stopService(android.content.Intent(context, AgentService::class.java))
         AgentState.busy.value = false
         AgentState.status.value = ""
         viewModelScope.launch { reload() }
+    }
+
+    /**
+     * Soft interrupt: the loop stops at the next tool boundary and keeps whatever
+     * it already produced. Preferred over [stopTurn] when a command is still
+     * running and its output is worth keeping.
+     */
+    fun interruptTurn() {
+        AgentState.interrupt.value = true
+        AgentState.status.value = "Menghentikan setelah langkah ini…"
+    }
+
+    /** Re-runs the turn that produced [message], from the prompt that opened it. */
+    fun retry(message: UiMessage) = viewModelScope.launch {
+        if (busy.value) return@launch
+        val id = sessionId
+        val rows = dao.messages(id)
+        val index = rows.indexOfFirst { it.id == message.id }
+        if (index < 0) return@launch
+        // The prompt to replay is the user row at or before the tapped message.
+        val prompt = rows.take(index + 1).lastOrNull { it.role == "user" } ?: return@launch
+        dao.deleteMessagesFrom(id, prompt.id)
+        AgentState.error.value = null
+        AgentState.limitHit.value = null
+        reload()
+        AgentService.startTurn(getApplication(), id)
+    }
+
+    fun deleteMessage(message: UiMessage) = viewModelScope.launch {
+        dao.deleteMessage(message.id)
+        reload()
+    }
+
+    fun deleteSession(id: Long) = viewModelScope.launch {
+        if (busy.value && id == sessionId) return@launch
+        dao.deleteSession(id)
+        Workspace.forgetSession(getApplication(), id)
+        val remaining = dao.sessions()
+        sessions.value = remaining
+        if (id == sessionId) {
+            val next = remaining.firstOrNull()
+            if (next != null) open(next.id) else newSession()
+        }
     }
 
     private fun addTurn(role: String, text: String) {

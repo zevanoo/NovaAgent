@@ -21,6 +21,14 @@ android {
         compose = true
     }
 
+    // The bundled busybox is exec'd from nativeLibraryDir, which only works when
+    // the libs are really extracted at install time instead of mmap'd from the APK.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -40,6 +48,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

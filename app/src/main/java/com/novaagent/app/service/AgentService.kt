@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.novaagent.app.MainActivity
@@ -98,6 +99,7 @@ class AgentService : Service() {
         job = scope.launch {
             AgentState.busy.value = true
             AgentState.error.value = null
+            AgentState.interrupt.value = false
             val dao = ChatDb.of(this@AgentService).chat()
             try {
                 val session = dao.session(sessionId)
@@ -114,7 +116,7 @@ class AgentService : Service() {
                     } else if (defaultDir.isBlank()) {
                         "" // no default dir configured: stay in Termux HOME
                     } else {
-                        val path = Workspace.projectDirFor(this@AgentService, sessionId, title)
+                        val path = Workspace.dirFor(this@AgentService, sessionId, title)
                         val r = TermuxBridge.run(
                             this@AgentService,
                             "mkdir -p '$path' && cd '$path' && pwd",
@@ -176,8 +178,23 @@ class AgentService : Service() {
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable, not Exception: an IllegalArgumentException from a header
+                // field or an OutOfMemory from a huge tool result used to escape here
+                // and take the process down mid-turn. A failed turn must never close
+                // the app.
+                Log.e(TAG, "turn failed", e)
                 AgentState.error.value = e.message ?: e.javaClass.simpleName
+                runCatching {
+                    dao.insertMessage(
+                        Message(
+                            sessionId = sessionId,
+                            role = "assistant",
+                            content = "Error: " + (e.message ?: e.javaClass.simpleName),
+                            createdAt = System.currentTimeMillis(),
+                        )
+                    )
+                }
             } finally {
                 AgentState.busy.value = false
                 AgentState.status.value = ""
@@ -321,6 +338,7 @@ class AgentService : Service() {
     }
 
     companion object {
+        private const val TAG = "AgentService"
         private const val CHANNEL_ID = "novaagent_agent"
         private const val NOTIFICATION_ID = 1
         private const val LIMIT_NOTIFICATION_ID = 2

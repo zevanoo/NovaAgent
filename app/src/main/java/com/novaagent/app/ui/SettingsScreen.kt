@@ -1,11 +1,7 @@
 package com.novaagent.app.ui
 
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,16 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.OutlinedTextField
 import androidx.core.content.ContextCompat
 import com.novaagent.app.bridge.TermuxBridge
 import com.novaagent.app.data.AgentState
+import com.novaagent.app.data.AppFiles
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.ProviderConfig
@@ -52,10 +46,8 @@ import com.novaagent.app.data.Settings
 import com.novaagent.app.data.Skills
 import com.novaagent.app.data.Workspace
 import com.novaagent.app.service.AgentService
-import com.novaagent.app.ui.theme.AppFonts
 import com.novaagent.app.ui.theme.Spacing
 import com.novaagent.app.ui.theme.monoStyle
-import android.provider.Settings as AndroidSettings
 
 /**
  * Settings. Deliberately short: the only workdir setting is the default root —
@@ -64,7 +56,7 @@ import android.provider.Settings as AndroidSettings
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val saved by Settings.config.collectAsState()
     val running by AgentState.running.collectAsState()
 
@@ -75,12 +67,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capMb by remember { mutableStateOf(Limits.memoryCapMb(context)) }
     var rounds by remember { mutableStateOf(Limits.maxRounds(context)) }
     var autoWrite by remember { mutableStateOf(Limits.isAutoWrite(context)) }
-    var fontEpoch by remember { mutableStateOf(0) }
     var skillEpoch by remember { mutableStateOf(0) }
     var note by remember { mutableStateOf("") }
 
     val termuxStatus = TermuxBridge.status(context)
-    val fonts = remember(fontEpoch) { AppFonts.installed(context) }
     val workdir = Workspace.defaultDir(context)
     val skills = remember(skillEpoch, workdir) { Skills.all(context, workdir) }
 
@@ -142,7 +132,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             Field(
                 value = defaultDir,
                 onValueChange = { defaultDir = it },
-                placeholder = "mis. /sdcard/projects",
+                placeholder = AppFiles.media(context).absolutePath,
             )
             Row {
                 TextButton(onClick = {
@@ -150,54 +140,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     AgentState.workdirVersion.value += 1
                     note = "Default workdir disimpan."
                 }) { Text("Simpan dir") }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    TextButton(onClick = {
-                        if (!Environment.isExternalStorageManager()) {
-                            context.startActivity(
-                                Intent(AndroidSettings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                                    .setData(Uri.parse("package:" + context.packageName))
-                            )
-                        }
-                    }) { Text("Izin storage") }
-                }
+                TextButton(onClick = {
+                    defaultDir = AppFiles.media(context).absolutePath
+                    Workspace.setDefaultDir(context, defaultDir)
+                    AgentState.workdirVersion.value += 1
+                    note = "Kembali ke folder bawaan app."
+                }) { Text("Pakai bawaan") }
             }
 
             Divider()
-
-            Section("Tampilan")
-            BodyText(
-                "Font bawaan: Inter (teks), Inter Tight (judul), JetBrains Mono (kode). " +
-                    "Pasang .ttf/.otf sendiri per peran di bawah.",
-            )
-            fonts.forEach { (role, fileName) ->
-                val picker = rememberLauncherForActivityResult(
-                    ActivityResultContracts.OpenDocument()
-                ) { uri: Uri? ->
-                    if (uri != null) {
-                        note = AppFonts.install(context, role, uri)
-                        fontEpoch++
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(role, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            fileName,
-                            style = monoStyle(11),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    TextButton(onClick = {
-                        picker.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/octet-stream"))
-                    }) { Text("Pasang") }
-                    if (fileName != "(bawaan)") {
-                        TextButton(onClick = {
-                            note = AppFonts.reset(context, role)
-                            fontEpoch++
-                        }) { Text("Reset") }
-                    }
-                }
-            }
 
             Divider()
 
@@ -278,11 +229,11 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Divider()
 
-            Section("Termux")
+            Section("Shell")
             BodyText(termuxStatus)
             BodyText(
-                "Satu kali di Termux: set allow-external-apps=true di " +
-                    "~/.termux/termux.properties, lalu restart Termux.",
+                "Shell bawaan ikut di dalam app — tidak perlu Termux atau Termux:API. " +
+                    "File kerja ada di Android/media/" + context.packageName + ".",
             )
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

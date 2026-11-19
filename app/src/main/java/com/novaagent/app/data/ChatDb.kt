@@ -68,6 +68,19 @@ interface ChatDao {
 
     @Query("UPDATE sessions SET workdir = :workdir WHERE id = :id")
     suspend fun setWorkdir(id: Long, workdir: String)
+
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteMessage(id: Long)
+
+    /** Retry: drop the target turn and everything after it, then replay. */
+    @Query("DELETE FROM messages WHERE sessionId = :sessionId AND id >= :fromId")
+    suspend fun deleteMessagesFrom(sessionId: Long, fromId: Long)
+
+    @Query("DELETE FROM sessions WHERE id = :id")
+    suspend fun deleteSession(id: Long)
+
+    @Query("DELETE FROM messages WHERE sessionId = :id")
+    suspend fun deleteSessionMessages(id: Long)
 }
 
 @Database(entities = [Session::class, Message::class], version = 2, exportSchema = false)

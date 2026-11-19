@@ -30,4 +30,10 @@ object AgentState {
 
     /** Bumped when the header's workdir label should be recomputed. */
     val workdirVersion = MutableStateFlow(0)
+
+    /**
+     * Soft interrupt. The loop checks it between tool calls and stops keeping
+     * what it produced, instead of killing the service mid-command.
+     */
+    val interrupt = MutableStateFlow(false)
 }
