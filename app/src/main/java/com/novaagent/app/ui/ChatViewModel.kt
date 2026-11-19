@@ -25,7 +25,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = db.chat()
     private val prefs = app.getSharedPreferences("novaagent", 0)
     private val sysPrompt: String
-        get() = MemoryFiles.read(app, MemoryFiles.SOUL).orEmpty().ifBlank { SYSTEM_PROMPT }
+        get() = MemoryFiles.read(getApplication(), MemoryFiles.SOUL).orEmpty().ifBlank { SYSTEM_PROMPT }
 
     var sessionId by mutableStateOf(0L)
         private set
