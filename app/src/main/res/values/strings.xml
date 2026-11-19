@@ -5,4 +5,8 @@
     <string name="notif_title">NovaAgent aktif</string>
     <string name="notif_text">Agent siap menerima task.</string>
     <string name="notif_working">Menjalankan task…</string>
+    <string name="notif_limit_title">Batas putaran tercapai</string>
+    <string name="notif_limit_text">Agent berhenti setelah %1$d putaran tool. Lanjutkan thread atau mulai prompt baru?</string>
+    <string name="notif_limit_continue">Lanjut</string>
+    <string name="notif_limit_new">Prompt baru</string>
 </resources>

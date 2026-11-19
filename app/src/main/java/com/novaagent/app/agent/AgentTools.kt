@@ -2,7 +2,9 @@ package com.novaagent.app.agent
 
 import android.content.Context
 import com.novaagent.app.bridge.TermuxBridge
+import com.novaagent.app.data.AgentState
 import com.novaagent.app.data.Limits
+import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.net.LlmClient
 import com.novaagent.app.net.ToolCall
 import org.json.JSONArray
@@ -61,6 +63,18 @@ object AgentTools {
             },
             listOf("command"),
         ))
+        put(tool(
+            "save_memory",
+            "Simpan catatan ke memory. target=USER (preferensi user, berlaku semua project), " +
+                "SOUL (persona agent), atau PROJECT (konteks mendalam project aktif, hanya " +
+                "dimuat saat workdir di project ini). Tulis fakta yang berguna untuk sesi " +
+                "berikutnya, bukan ringkasan percakapan.",
+            JSONObject().apply {
+                prop("target", "string", "USER, SOUL, atau PROJECT")
+                prop("note", "string", "Catatan singkat yang disimpan")
+            },
+            listOf("target", "note"),
+        ))
     }.toString()
 
     private fun tool(name: String, description: String, props: JSONObject, required: List<String>) =
@@ -82,17 +96,26 @@ object AgentTools {
     }
 
     /** Returns the tool result as text; never throws. */
-    fun execute(context: Context, name: String, args: JSONObject, workdir: String): String = try {
+    fun execute(
+        context: Context,
+        name: String,
+        args: JSONObject,
+        workdir: String,
+        timeoutMs: Int = DEFAULT_COMMAND_TIMEOUT_MS,
+    ): String = try {
         when (name) {
             "read_file" -> readFile(args.optString("path"), args, workdir)
             "write_file" -> writeFile(args.optString("path"), args.optString("content"), workdir)
             "list_dir" -> listDir(args.optString("path"), workdir)
-            "run_shell" -> runShell(context, args.optString("command"), args.optInt("timeout_ms", 120_000))
-            else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell."
+            "run_shell" -> runShell(context, args.optString("command"), timeoutMs)
+            "save_memory" -> saveMemory(context, args.optString("target"), args.optString("note"), workdir)
+            else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell, save_memory."
         }
     } catch (e: Exception) {
         "Error: " + (e.message ?: e.javaClass.simpleName)
     }
+
+    const val DEFAULT_COMMAND_TIMEOUT_MS = 120_000
 
     private fun readFile(path: String, args: JSONObject, workdir: String): String {
         val f = resolve(path, workdir)
@@ -130,7 +153,7 @@ object AgentTools {
         // ulimit -v takes KB. Without a cap, one runaway command can get the whole
         // app OOM-killed by the system; with it, the command dies instead.
         val wrapped = if (capMb > 0) "ulimit -v ${capMb * 1024} 2>/dev/null; $command" else command
-        val r = TermuxBridge.run(context, wrapped, timeoutMs.coerceIn(1_000, 600_000))
+        val r = TermuxBridge.run(context, wrapped, timeoutMs.coerceIn(1_000, 3_600_000))
         return when {
             r.error != null -> "Error: ${r.error}"
             r.exitCode == 0 -> r.output.ifBlank { "(selesai, tanpa output)" }
@@ -139,6 +162,26 @@ object AgentTools {
                     "(naikkan di Settings kalau memang butuh).\n${r.output}".trim()
             else -> "exit ${r.exitCode}\n${r.output}".take(MAX_OUTPUT + 40)
         }
+    }
+
+    /**
+     * Memory write. With the confirm policy the note is queued for the user instead
+     * of landing silently — memory is injected into every later prompt, so a wrong
+     * write would poison future sessions, not just this turn.
+     */
+    private fun saveMemory(context: Context, target: String, note: String, workdir: String): String {
+        val t = target.trim().uppercase()
+        if (t !in setOf("SOUL", "USER", "PROJECT")) return "Error: target harus SOUL, USER, atau PROJECT."
+        if (note.isBlank()) return "Error: note kosong."
+        if (t == "PROJECT" && workdir.isBlank()) {
+            return "Error: workdir belum diset, tidak ada project untuk disimpan."
+        }
+        if (!Limits.isAutoWrite(context)) {
+            MemoryFiles.queuePending(context, workdir, t, note)
+            AgentState.pendingMemory.value += 1
+            return "Menunggu konfirmasi user: $t — catatan disimpan setelah disetujui di chat."
+        }
+        return MemoryFiles.append(context, workdir, t, note)
     }
 
     private fun resolve(path: String, workdir: String): File {
@@ -161,41 +204,87 @@ object AgentTools {
     private const val MAX_OUTPUT = 8_000
 }
 
-/** Drives one assistant turn: call the model, run requested tools, repeat until it answers. */
-object AgentLoop {
+/** One assistant→tools exchange, kept so the UI can render a collapsible row. */
+data class ToolRound(val name: String, val detail: String, val thought: String, val result: String)
 
-    private const val MAX_ROUNDS = 6
+/** Outcome of one user turn. */
+data class TurnResult(
+    val text: String,
+    val rounds: List<ToolRound>,
+    val hitLimit: Boolean,
+    /** Provider-shaped history after the turn, so the next turn keeps the thread. */
+    val history: List<JSONObject>,
+)
+
+/**
+ * Drives one assistant turn: call the model, run the tools it asks for, repeat
+ * until it answers or [maxRounds] tool rounds are spent.
+ *
+ * No wall-clock watchdog on purpose — long builds and installs are legitimate.
+ * The round cap is the brake: when it trips, the service asks the user whether
+ * to continue ("lanjut") or start a fresh prompt.
+ */
+object AgentLoop {
 
     fun run(
         context: Context,
         history: List<JSONObject>,
         system: String,
         workdir: String,
-        onTool: (String, String) -> Unit,
-    ): String {
+        maxRounds: Int,
+        commandTimeoutMs: Int = AgentTools.DEFAULT_COMMAND_TIMEOUT_MS,
+        onTool: (ToolRound) -> Unit,
+    ): TurnResult {
         val messages = ArrayList(history)
-        repeat(MAX_ROUNDS) { round ->
+        val rounds = mutableListOf<ToolRound>()
+        var used = 0
+
+        while (used < maxRounds) {
             val response = LlmClient.chatWithTools(
                 com.novaagent.app.data.Settings.config.value, messages, system, AgentTools.defs,
             )
-
             val text = response.content.trim()
+
             if (response.toolCalls.isEmpty()) {
-                return text.ifBlank { "(provider mengembalikan balasan kosong)" }
+                messages.add(response.raw)
+                return TurnResult(
+                    text = text.ifBlank { "(provider mengembalikan balasan kosong)" },
+                    rounds = rounds,
+                    hitLimit = false,
+                    history = prune(messages),
+                )
             }
 
             messages.add(response.raw)
             for (call in response.toolCalls) {
-                onTool(call.name, summarize(call.arguments))
-                val result = AgentTools.execute(context, call.name, call.arguments, workdir)
+                used++
+                val timeout = if (call.arguments.has("timeout_ms")) {
+                    call.arguments.optInt("timeout_ms", commandTimeoutMs)
+                } else {
+                    commandTimeoutMs
+                }
+                val result = AgentTools.execute(context, call.name, call.arguments, workdir, timeout)
                 messages.add(toolResultMessage(call.id, result))
-            }
-            if (text.isNotBlank()) onTool("(catatan)", text)
-            if (round == MAX_ROUNDS - 1) {
-                return "Berhenti setelah $MAX_ROUNDS putaran tool tanpa jawaban akhir."
+                val round = ToolRound(call.name, summarize(call.arguments), text, result)
+                rounds += round
+                onTool(round)
+                if (used >= maxRounds) break
             }
         }
-        return "Berhenti tanpa jawaban akhir."
+
+        return TurnResult(
+            text = "Batas $maxRounds putaran tool tercapai. Balas \"lanjut\" untuk meneruskan, " +
+                "atau kirim prompt baru.",
+            rounds = rounds,
+            hitLimit = true,
+            history = prune(messages),
+        )
+    }
+
+    /** Keeps the provider request bounded: trim the middle, keep the opening context. */
+    private fun prune(messages: List<JSONObject>): List<JSONObject> {
+        if (messages.size <= MAX_HISTORY) return messages
+        return messages.take(2) + messages.takeLast(MAX_HISTORY - 2)
     }
 
     private fun summarize(args: JSONObject): String {
@@ -224,4 +313,6 @@ object AgentLoop {
     }
 
     fun toolMarker(name: String, detail: String) = "→ $name: $detail"
+
+    private const val MAX_HISTORY = 60
 }

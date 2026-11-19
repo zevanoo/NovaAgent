@@ -9,6 +9,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Entity(tableName = "sessions")
 data class Session(
@@ -16,6 +18,8 @@ data class Session(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
+    /** Per-session working directory override; blank falls through to project/main. */
+    val workdir: String = "",
 )
 
 @Entity(tableName = "messages")
@@ -25,6 +29,8 @@ data class Message(
     val role: String,
     val content: String,
     val createdAt: Long,
+    /** JSON array of tool rounds, UI-only: rendered as collapsible rows under the user message. */
+    val rounds: String = "",
 )
 
 @Dao
@@ -41,6 +47,9 @@ interface ChatDao {
     @Query("UPDATE sessions SET title = :title, updatedAt = :at WHERE id = :id")
     suspend fun touchSession(id: Long, title: String, at: Long)
 
+    @Query("UPDATE sessions SET workdir = :workdir WHERE id = :id")
+    suspend fun setSessionWorkdir(id: Long, workdir: String)
+
     @Query("SELECT * FROM messages WHERE sessionId = :id ORDER BY id")
     suspend fun messages(id: Long): List<Message>
 
@@ -50,21 +59,32 @@ interface ChatDao {
     @Query("DELETE FROM messages WHERE sessionId = :id")
     suspend fun clearMessages(id: Long)
 
-    @Query("SELECT content FROM messages WHERE sessionId = :id ORDER BY id")
+    @Query("SELECT content FROM messages WHERE sessionId = :id AND role = 'user' ORDER BY id")
     suspend fun contents(id: Long): List<String>
+
+    @Query("SELECT content FROM messages WHERE sessionId = :id AND role = 'assistant' ORDER BY id DESC LIMIT 1")
+    suspend fun lastAssistant(id: Long): String?
 }
 
-@Database(entities = [Session::class, Message::class], version = 1, exportSchema = false)
+@Database(entities = [Session::class, Message::class], version = 2, exportSchema = false)
 abstract class ChatDb : RoomDatabase() {
     abstract fun chat(): ChatDao
 
     companion object {
         @Volatile private var instance: ChatDb? = null
 
+        /** v1 shipped without per-session workdir and tool rounds; both are additive columns. */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN workdir TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE messages ADD COLUMN rounds TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun of(context: Context): ChatDb = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, ChatDb::class.java, "novaagent.db",
-            ).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
         }
     }
 }

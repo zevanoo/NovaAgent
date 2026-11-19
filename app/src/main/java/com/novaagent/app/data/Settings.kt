@@ -34,4 +34,17 @@ object Settings {
     }
 }
 
-data class UiMessage(val id: Long, val role: String, val text: String)
+data class UiMessage(
+    val id: Long,
+    val role: String,
+    val text: String,
+    val rounds: List<UiRound> = emptyList(),
+)
+
+/** One tool call rendered under the user turn; tap toggles result, tap thought toggles detail. */
+data class UiRound(
+    val name: String,
+    val detail: String,
+    val thought: String,
+    val result: String,
+)

@@ -16,6 +16,7 @@ import com.novaagent.app.data.Message
 import com.novaagent.app.data.Session
 import com.novaagent.app.data.Settings
 import com.novaagent.app.data.UiMessage
+import com.novaagent.app.data.UiRound
 import com.novaagent.app.data.Workspace
 import com.novaagent.app.net.LlmClient
 import com.novaagent.app.service.AgentService
@@ -23,12 +24,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 /**
  * Chat UI state. The agent turn itself runs in [AgentService] so it survives the
  * Activity; this class only writes the user message and re-reads Room when the
  * service signals completion.
+ *
+ * Working directory is three-tier (session > project > main). The session tier is
+ * per-chat, so a project session can stay pinned while the project default changes.
  */
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -37,11 +46,44 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var seq = 0L
 
     private val sysPrompt: String
-        get() = MemoryFiles.read(getApplication(), MemoryFiles.SOUL).orEmpty().ifBlank { SYSTEM_PROMPT }
+        get() = MemoryFiles.systemPrompt(getApplication(), workdir).text
 
+    /** Resolved workdir for the open session; setting it writes the session tier only. */
     var workdir: String
-        get() = Workspace.get(getApplication())
-        set(value) = Workspace.set(getApplication(), value)
+        get() = sessionWorkdir.ifBlank { Workspace.resolve(getApplication()) }
+        set(value) {
+            sessionWorkdir = value.trim()
+            val id = sessionId
+            if (id != 0L) viewModelScope.launch {
+                dao.setSessionWorkdir(id, sessionWorkdir)
+                if (sessionWorkdir.isNotBlank()) Workspace.remember(getApplication(), sessionWorkdir)
+            }
+        }
+
+    var sessionWorkdir by mutableStateOf("")
+        private set
+
+    /** Which tier produced [workdir] — "sesi" / "project" / "main" / "HOME Termux". */
+    val pendingMemory = AgentState.pendingMemory
+
+    /** Memory writes the agent queued and the user has not answered yet. */
+    fun pendingWrites(): List<MemoryFiles.Pending> = MemoryFiles.pending(getApplication())
+
+    fun workdirSource(): String = when {
+        sessionWorkdir.isNotBlank() -> "sesi"
+        else -> Workspace.source(getApplication())
+    }
+
+    fun promotedWorkdir(): String = Workspace.main(getApplication())
+
+    fun projectWorkdir(): String = Workspace.project(getApplication())
+
+    fun setProjectWorkdir(path: String) = Workspace.setProject(getApplication(), path)
+
+    fun setMainWorkdir(path: String) = Workspace.setMain(getApplication(), path)
+
+    /** Folders offered in the session picker: projects seen so far. */
+    fun knownWorkdirs(): List<String> = Workspace.known(getApplication())
 
     var sessionId by mutableStateOf(0L)
         private set
@@ -51,22 +93,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val busy = AgentState.busy
     val status = AgentState.status
     val error = AgentState.error
+    val limitHit = AgentState.limitHit
 
     init {
-        // ponytail: one session kept across restarts; per-project sessions land with M6.
         val last = prefs.getLong("sessionId", 0L)
         viewModelScope.launch {
             val existing = if (last != 0L) dao.session(last) else null
             if (existing != null) open(existing.id) else newSession()
             sessions.value = dao.sessions()
         }
-        // A turn that finished while this screen was away still lands here.
+        var seen = AgentState.turnDone.value
         viewModelScope.launch {
-            var seen = AgentState.turnDone.value
             AgentState.turnDone.collect { done ->
                 if (done != seen) {
                     seen = done
                     reload()
+                }
+            }
+        }
+        // "Prompt baru" tapped in the limit notification: focus the composer on a new session.
+        var seenPrompt = AgentState.requestPrompt.value
+        viewModelScope.launch {
+            AgentState.requestPrompt.collect { n ->
+                if (n != seenPrompt) {
+                    seenPrompt = n
+                    newSession()
                 }
             }
         }
@@ -75,19 +126,51 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun open(id: Long) {
         sessionId = id
         prefs.edit().putLong("sessionId", id).apply()
-        messages.value = dao.messages(id).map { UiMessage(nextId(), it.role, it.content) }
+        sessionWorkdir = dao.session(id)?.workdir.orEmpty()
+        AgentState.limitHit.value = null
+        messages.value = render(dao.messages(id))
     }
 
     private suspend fun reload() {
         val id = sessionId
         if (id == 0L) return
-        messages.value = dao.messages(id).map { UiMessage(nextId(), it.role, it.content) }
+        messages.value = render(dao.messages(id))
         sessions.value = dao.sessions()
+    }
+
+    /**
+     * Tool rounds belong under the user turn that triggered them, so the assistant
+     * row carries them and the renderer attaches them to the preceding user bubble.
+     */
+    private fun render(rows: List<Message>): List<UiMessage> = rows.map { row ->
+        UiMessage(
+            id = row.id,
+            role = row.role,
+            text = row.content,
+            rounds = decodeRounds(row.rounds),
+        )
+    }
+
+    private fun decodeRounds(raw: String): List<UiRound> {
+        if (raw.isBlank()) return emptyList()
+        return runCatching {
+            Json.parseToJsonElement(raw).jsonArray.map { el ->
+                val o = el as JsonObject
+                UiRound(
+                    name = o["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    detail = o["detail"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    thought = o["thought"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    result = o["result"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     fun newSession() = viewModelScope.launch {
         val now = System.currentTimeMillis()
-        val id = dao.insertSession(Session(title = "Sesi baru", createdAt = now, updatedAt = now))
+        val id = dao.insertSession(
+            Session(title = "Sesi baru", createdAt = now, updatedAt = now, workdir = "")
+        )
         open(id)
         sessions.value = dao.sessions()
     }
@@ -108,6 +191,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             persist("user", text)
             AgentService.startTurn(getApplication(), sessionId)
         }
+    }
+
+    /** "Lanjut" after the round cap: same thread, fresh budget, no new user row. */
+    fun continueTurn() {
+        if (busy.value) return
+        AgentState.limitHit.value = null
+        AgentState.error.value = null
+        AgentService.continueTurn(getApplication(), sessionId)
+    }
+
+    fun dismissLimit() {
+        AgentState.limitHit.value = null
     }
 
     fun stopTurn() {
@@ -133,7 +228,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun appendSystem(text: String) = addTurn("assistant", text)
 
-    fun clearError() { AgentState.error.value = null }
+    fun clearError() {
+        AgentState.error.value = null
+    }
 
     private fun command(text: String) {
         val name = text.substringBefore(' ').lowercase()
@@ -145,16 +242,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 "Provider: ${Settings.config.value.baseUrl}\nModel: ${Settings.config.value.model}\n" +
                     "Ubah di tombol ⚙ di kanan atas."
             )
-            "/memory" -> appendSystem(MemoryFiles.status(getApplication()))
+            "/memory" -> memoryCommand(arg)
             "/skill" -> appendSystem(skillList())
             "/termux" -> {
                 if (arg.isNotBlank()) workdir = arg
                 appendSystem(
                     TermuxBridge.status(getApplication()) +
-                        "\nWorking dir: " + workdir.ifBlank { "(HOME Termux)" } +
-                        "\nBatas memori command: " + Limits.describe(getApplication())
+                        "\nWorking dir: ${workdir.ifBlank { "(HOME Termux)" }} (dari ${workdirSource()})" +
+                        "\nBatas memori command: " + Limits.describeMemory(getApplication()) +
+                        "\nBatas putaran tool per turn: " + Limits.maxRounds(getApplication())
                 )
             }
+            "/limit" -> appendSystem(
+                "Batas putaran tool: ${Limits.maxRounds(getApplication())}\n" +
+                    "Batas memori command: ${Limits.describeMemory(getApplication())}\n" +
+                    "Ubah di Settings."
+            )
             "/compact" -> compact()
             else -> appendSystem("Command tidak dikenal: $name\n\n$HELP")
         }
@@ -204,6 +307,62 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * /memory                       status of all three files
+     * /memory <soul|user|project> <teks>   append a note
+     * /memory approve <target>      apply a write the agent queued
+     * /memory reject <target>       drop it
+     */
+    private fun memoryCommand(arg: String) = viewModelScope.launch {
+        val app = getApplication<Application>()
+        val parts = arg.trim().split(Regex("\\s+"), limit = 2)
+        val head = parts.getOrNull(0)?.lowercase().orEmpty()
+        val rest = parts.getOrNull(1)?.trim().orEmpty()
+        val text = withContext(Dispatchers.IO) {
+            when {
+                arg.isBlank() -> MemoryFiles.status(app, workdir) + pendingSummary(app)
+                head == "approve" -> MemoryFiles.confirmPending(app, rest.uppercase())
+                head == "reject" -> {
+                    MemoryFiles.rejectPending(app, rest.uppercase())
+                    "Ditolak: catatan $rest tidak disimpan."
+                }
+                head == "edit" -> {
+                    val (file, body) = MemoryFiles.readTarget(app, workdir, rest)
+                        ?: return@withContext "Error: target harus SOUL, USER, atau PROJECT."
+                    "Edit langsung di Settings → Memory, atau salin isi file:\n${file.path}\n\n$body"
+                }
+                head == "soul" || head == "user" || head == "project" -> {
+                    if (rest.isBlank()) "Error: isi catatan kosong. Contoh: /memory user suka Kotlin"
+                    else MemoryFiles.append(app, workdir, head, rest)
+                }
+                else -> "Error: format /memory [soul|user|project|approve|reject|edit] [teks]"
+            }
+        }
+        if (head == "approve" && text.startsWith("OK:")) AgentState.pendingMemory.value += 1
+        appendSystem(text)
+    }
+
+    private fun pendingSummary(app: Application): String {
+        val pending = MemoryFiles.pending(app)
+        if (pending.isEmpty()) return ""
+        return "\n\nMenunggu konfirmasi:\n" + pending.joinToString("\n") {
+            "• ${it.target}: ${it.note.take(100)}\n  /memory approve ${it.target.lowercase()} — atau reject"
+        }
+    }
+
+    /** Applies or drops the memory the agent queued. Called from the chat banner. */
+    fun resolvePending(target: String, approve: Boolean) = viewModelScope.launch {
+        val app = getApplication<Application>()
+        val result = withContext(Dispatchers.IO) {
+            if (approve) MemoryFiles.confirmPending(app, target) else {
+                MemoryFiles.rejectPending(app, target)
+                "Ditolak: catatan $target tidak disimpan."
+            }
+        }
+        AgentState.pendingMemory.value += 1
+        appendSystem(result)
+    }
+
     private fun skillList(): String {
         val dir = File(getApplication<Application>().filesDir, "skills")
         val names = dir.listFiles()?.filter { it.isDirectory }?.map { it.name }.orEmpty()
@@ -220,13 +379,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             /help — daftar ini
             /compact — ringkas riwayat jadi catatan kerja
             /clear — mulai sesi baru
-            /memory — status SOUL.md / USER.md / MEMORY.md
+            /memory — status memory global & project
+            /memory <soul|user|project> <teks> — tambah catatan
+            /memory approve|reject <target> — terapkan/buang catatan tertunda
             /skill — daftar skill terpasang
             /model — provider & model aktif
-            /termux [path] — status bridge Termux, atau set working dir
+            /termux [path] — status bridge, atau set workdir sesi
+            /limit — batas putaran tool & memori
         """.trimIndent()
-
-        private const val SYSTEM_PROMPT =
-            "Kamu adalah NovaAgent, coding agent di Android. Jawab ringkas, tunjukkan kode konkret."
     }
 }

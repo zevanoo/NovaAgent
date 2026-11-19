@@ -52,8 +52,11 @@ fun SettingsScreen(onBack: () -> Unit) {
     var baseUrl by remember { mutableStateOf(saved.baseUrl) }
     var apiKey by remember { mutableStateOf(saved.apiKey) }
     var model by remember { mutableStateOf(saved.model) }
-    var workdir by remember { mutableStateOf(Workspace.get(context)) }
+    var workdirMain by remember { mutableStateOf(Workspace.main(context)) }
+    var workdirProject by remember { mutableStateOf(Workspace.project(context)) }
     var capMb by remember { mutableStateOf(Limits.memoryCapMb(context)) }
+    var rounds by remember { mutableStateOf(Limits.maxRounds(context)) }
+    var autoWrite by remember { mutableStateOf(Limits.isAutoWrite(context)) }
     // Computed on every recomposition so returning from the system permission dialog refreshes it.
     val termuxStatus = TermuxBridge.status(context)
 
@@ -108,14 +111,31 @@ fun SettingsScreen(onBack: () -> Unit) {
             Text("Bridge Termux", style = MaterialTheme.typography.titleMedium)
             Text(termuxStatus, style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
-                value = workdir,
-                onValueChange = { workdir = it },
-                label = { Text("Working dir (kosong = HOME Termux)") },
+                value = workdirMain,
+                onValueChange = { workdirMain = it },
+                label = { Text("Main workdir (fallback terakhir)") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
+            OutlinedTextField(
+                value = workdirProject,
+                onValueChange = { workdirProject = it },
+                label = { Text("Project workdir (default project)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Text(
+                "Urutan: sesi chat > project > main. Sesi diset dari picker di layar chat.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
             Row {
-                TextButton(onClick = { Workspace.set(context, workdir) }) { Text("Simpan dir") }
+                TextButton(onClick = {
+                    Workspace.setMain(context, workdirMain)
+                    Workspace.setProject(context, workdirProject)
+                    workdirMain = Workspace.main(context)
+                    workdirProject = Workspace.project(context)
+                }) { Text("Simpan dir") }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     TextButton(onClick = {
                         if (!Environment.isExternalStorageManager()) {
@@ -131,6 +151,22 @@ fun SettingsScreen(onBack: () -> Unit) {
                 "Satu kali di Termux: set `allow-external-apps=true` di " +
                     "~/.termux/termux.properties, lalu restart Termux.",
                 style = MaterialTheme.typography.bodySmall,
+            )
+
+            HorizontalDivider(Modifier.padding(vertical = 16.dp))
+
+            Text("Batas putaran tool per turn", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "$rounds putaran. Saat tercapai, agent berhenti dan menawarkan " +
+                    "\"Lanjut\" atau prompt baru. Tidak ada watchdog waktu — perintah panjang dibiarkan selesai.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = rounds.toFloat(),
+                onValueChange = { rounds = ((it / 5).toInt() * 5).coerceIn(5, 60) },
+                onValueChangeFinished = { Limits.setMaxRounds(context, rounds) },
+                valueRange = 5f..60f,
+                steps = 10,
             )
 
             HorizontalDivider(Modifier.padding(vertical = 16.dp))
@@ -172,10 +208,30 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Text("Memory", style = MaterialTheme.typography.titleMedium)
             Text(
-                MemoryFiles.status(context),
+                MemoryFiles.status(context, Workspace.resolve(context)),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Tulis memory otomatis", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (autoWrite) "Agent menulis SOUL.md / USER.md / MEMORY.md sendiri."
+                        else "Agent mengusulkan, kamu konfirmasi di chat.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = autoWrite,
+                    onCheckedChange = {
+                        autoWrite = it
+                        Limits.setMemoryWritePolicy(
+                            context,
+                            if (it) Limits.POLICY_AUTO else Limits.POLICY_CONFIRM,
+                        )
+                    },
+                )
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 16.dp))
 
