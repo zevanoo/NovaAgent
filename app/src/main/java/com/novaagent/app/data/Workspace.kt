@@ -37,7 +37,7 @@ object Workspace {
     fun setSessionDir(context: Context, sessionId: Long, path: String) {
         if (sessionId == 0L) return
         val lines = prefs(context).getString(P_SESSION_DIR, "").orEmpty().lineSequence()
-            .filter { it.isNotBlank() && !startsWith("$sessionId=") }
+            .filter { it.isNotBlank() && !it.startsWith("$sessionId=") }
             .toMutableList()
         if (path.isNotBlank()) lines.add("$sessionId=${path.trim()}")
         prefs(context).edit().putString(P_SESSION_DIR, lines.joinToString("\n")).apply()

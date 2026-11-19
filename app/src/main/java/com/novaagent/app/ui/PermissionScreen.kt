@@ -48,6 +48,7 @@ import com.novaagent.app.ui.theme.monoStyle
  * there is no broad-storage ask because the app owns its media dir, and no Termux
  * permission because the shell is bundled.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun PermissionScreen(onDone: () -> Unit) {
     val context = LocalContext.current
