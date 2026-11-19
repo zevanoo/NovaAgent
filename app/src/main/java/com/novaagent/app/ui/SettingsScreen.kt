@@ -17,6 +17,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.novaagent.app.bridge.TermuxBridge
 import com.novaagent.app.data.AgentState
+import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.ProviderConfig
 import com.novaagent.app.data.Settings
@@ -51,6 +53,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var apiKey by remember { mutableStateOf(saved.apiKey) }
     var model by remember { mutableStateOf(saved.model) }
     var workdir by remember { mutableStateOf(Workspace.get(context)) }
+    var capMb by remember { mutableStateOf(Limits.memoryCapMb(context)) }
     // Computed on every recomposition so returning from the system permission dialog refreshes it.
     val termuxStatus = TermuxBridge.status(context)
 
@@ -128,6 +131,21 @@ fun SettingsScreen(onBack: () -> Unit) {
                 "Satu kali di Termux: set `allow-external-apps=true` di " +
                     "~/.termux/termux.properties, lalu restart Termux.",
                 style = MaterialTheme.typography.bodySmall,
+            )
+
+            HorizontalDivider(Modifier.padding(vertical = 16.dp))
+
+            Text("Batas memori per command", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (capMb == 0) "Tanpa batas — satu perintah bisa menghabiskan RAM dan memicu force-close."
+                else "$capMb MB (ulimit -v)",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = capMb.toFloat(),
+                onValueChange = { capMb = (it / 64).toInt() * 64 },
+                onValueChangeFinished = { Limits.setMemoryCapMb(context, capMb) },
+                valueRange = 0f..2048f,
             )
 
             HorizontalDivider(Modifier.padding(vertical = 16.dp))

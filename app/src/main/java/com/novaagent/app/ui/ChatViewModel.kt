@@ -8,7 +8,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.novaagent.app.agent.AgentLoop
 import com.novaagent.app.bridge.TermuxBridge
+import com.novaagent.app.data.AgentState
 import com.novaagent.app.data.ChatDb
+import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Message
 import com.novaagent.app.data.Session
@@ -16,13 +18,18 @@ import com.novaagent.app.data.Settings
 import com.novaagent.app.data.UiMessage
 import com.novaagent.app.data.Workspace
 import com.novaagent.app.net.LlmClient
+import com.novaagent.app.service.AgentService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.io.File
 
+/**
+ * Chat UI state. The agent turn itself runs in [AgentService] so it survives the
+ * Activity; this class only writes the user message and re-reads Room when the
+ * service signals completion.
+ */
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val dao = ChatDb.of(app).chat()
@@ -32,17 +39,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val sysPrompt: String
         get() = MemoryFiles.read(getApplication(), MemoryFiles.SOUL).orEmpty().ifBlank { SYSTEM_PROMPT }
 
-    /** Shell working directory for tools; empty means Termux $HOME. */
     var workdir: String
         get() = Workspace.get(getApplication())
         set(value) = Workspace.set(getApplication(), value)
 
     var sessionId by mutableStateOf(0L)
         private set
+
     val messages = MutableStateFlow<List<UiMessage>>(emptyList())
     val sessions = MutableStateFlow<List<Session>>(emptyList())
-    val busy = MutableStateFlow(false)
-    val error = MutableStateFlow<String?>(null)
+    val busy = AgentState.busy
+    val status = AgentState.status
+    val error = AgentState.error
 
     init {
         // ponytail: one session kept across restarts; per-project sessions land with M6.
@@ -52,12 +60,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             if (existing != null) open(existing.id) else newSession()
             sessions.value = dao.sessions()
         }
+        // A turn that finished while this screen was away still lands here.
+        viewModelScope.launch {
+            var seen = AgentState.turnDone.value
+            AgentState.turnDone.collect { done ->
+                if (done != seen) {
+                    seen = done
+                    reload()
+                }
+            }
+        }
     }
 
     private suspend fun open(id: Long) {
         sessionId = id
         prefs.edit().putLong("sessionId", id).apply()
         messages.value = dao.messages(id).map { UiMessage(nextId(), it.role, it.content) }
+    }
+
+    private suspend fun reload() {
+        val id = sessionId
+        if (id == 0L) return
+        messages.value = dao.messages(id).map { UiMessage(nextId(), it.role, it.content) }
+        sessions.value = dao.sessions()
     }
 
     fun newSession() = viewModelScope.launch {
@@ -71,47 +96,27 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun send(raw: String) {
         val text = raw.trim()
-        if (text.isEmpty() || busy.value) return
+        if (text.isEmpty()) return
         if (text.startsWith("/")) {
             command(text)
             return
         }
+        if (busy.value) return
         viewModelScope.launch {
-            busy.value = true
-            error.value = null
+            AgentState.error.value = null
             addTurn("user", text)
             persist("user", text)
-            try {
-                val history = apiHistory(sessionId)
-                val reply = withContext(Dispatchers.IO) {
-                    AgentLoop.run(
-                        context = getApplication(),
-                        history = history,
-                        system = sysPrompt,
-                        workdir = workdir,
-                        onTool = { name, detail -> addTurn("tool", AgentLoop.toolMarker(name, detail)) },
-                    )
-                }
-                addTurn("assistant", reply)
-                persist("assistant", reply)
-            } catch (e: Exception) {
-                error.value = e.message ?: e.javaClass.simpleName
-            } finally {
-                busy.value = false
-                sessions.value = dao.sessions()
-            }
+            AgentService.startTurn(getApplication(), sessionId)
         }
     }
 
-    /** Rebuilds the provider-facing history from Room. Tool markers are UI-only and get dropped. */
-    private suspend fun apiHistory(id: Long): MutableList<JSONObject> =
-        dao.messages(id).mapNotNull { row ->
-            when (row.role) {
-                "user" -> AgentLoop.userMessage(row.content)
-                "assistant" -> row.content.takeIf { it.isNotBlank() }?.let { AgentLoop.assistantMessage(it) }
-                else -> null
-            }
-        }.toMutableList()
+    fun stopTurn() {
+        val context = getApplication<Application>()
+        context.stopService(android.content.Intent(context, AgentService::class.java))
+        AgentState.busy.value = false
+        AgentState.status.value = ""
+        viewModelScope.launch { reload() }
+    }
 
     private fun addTurn(role: String, text: String) {
         messages.value = messages.value + UiMessage(nextId(), role, text)
@@ -126,11 +131,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         dao.touchSession(id, title, System.currentTimeMillis())
     }
 
-    private fun appendSystem(text: String) {
-        addTurn("assistant", text)
-    }
+    private fun appendSystem(text: String) = addTurn("assistant", text)
 
-    fun clearError() { error.value = null }
+    fun clearError() { AgentState.error.value = null }
 
     private fun command(text: String) {
         val name = text.substringBefore(' ').lowercase()
@@ -146,7 +149,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             "/skill" -> appendSystem(skillList())
             "/termux" -> {
                 if (arg.isNotBlank()) workdir = arg
-                appendSystem(TermuxBridge.status(getApplication()) + "\nWorking dir: " + workdir.ifBlank { "(HOME Termux)" })
+                appendSystem(
+                    TermuxBridge.status(getApplication()) +
+                        "\nWorking dir: " + workdir.ifBlank { "(HOME Termux)" } +
+                        "\nBatas memori command: " + Limits.describe(getApplication())
+                )
             }
             "/compact" -> compact()
             else -> appendSystem("Command tidak dikenal: $name\n\n$HELP")
@@ -154,34 +161,46 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun compact() = viewModelScope.launch {
-        val current = messages.value.filter { it.role != "tool" }
-        if (current.size < 2) {
+        val id = sessionId
+        if (id == 0L) return@launch
+        val rows = dao.messages(id)
+        if (rows.size < 2) {
             appendSystem("Riwayat terlalu pendek untuk diringkas.")
             return@launch
         }
-        busy.value = true
-        error.value = null
+        AgentState.busy.value = true
+        AgentState.error.value = null
         try {
-            val summary = withContext(Dispatchers.IO) {
-                val history = apiHistory(sessionId)
-                history.add(
-                    AgentLoop.userMessage(
-                        "Ringkas percakapan di atas jadi catatan kerja padat: keputusan, kode/nama file " +
-                            "yang disepakati, dan langkah berikutnya. Bahasa Indonesia, maksimal 20 baris."
-                    )
+            val history = rows.mapNotNull { row ->
+                when (row.role) {
+                    "user" -> AgentLoop.userMessage(row.content)
+                    "assistant" -> row.content.takeIf { it.isNotBlank() }?.let { AgentLoop.assistantMessage(it) }
+                    else -> null
+                }
+            }.toMutableList()
+            history.add(
+                AgentLoop.userMessage(
+                    "Ringkas percakapan di atas jadi catatan kerja padat: keputusan, kode/nama file " +
+                        "yang disepakati, dan langkah berikutnya. Bahasa Indonesia, maksimal 20 baris."
                 )
+            )
+            val summary = withContext(Dispatchers.IO) {
                 LlmClient.chat(Settings.config.value, history, sysPrompt)
             }
-            dao.clearMessages(sessionId)
-            val note = "[compact]\n$summary"
+            dao.clearMessages(id)
             dao.insertMessage(
-                Message(sessionId = sessionId, role = "assistant", content = note, createdAt = System.currentTimeMillis())
+                Message(
+                    sessionId = id,
+                    role = "assistant",
+                    content = "[compact]\n$summary",
+                    createdAt = System.currentTimeMillis(),
+                )
             )
-            messages.value = listOf(UiMessage(nextId(), "assistant", note))
+            reload()
         } catch (e: Exception) {
-            error.value = e.message ?: e.javaClass.simpleName
+            AgentState.error.value = e.message ?: e.javaClass.simpleName
         } finally {
-            busy.value = false
+            AgentState.busy.value = false
         }
     }
 

@@ -2,6 +2,7 @@ package com.novaagent.app.agent
 
 import android.content.Context
 import com.novaagent.app.bridge.TermuxBridge
+import com.novaagent.app.data.Limits
 import com.novaagent.app.net.LlmClient
 import com.novaagent.app.net.ToolCall
 import org.json.JSONArray
@@ -125,11 +126,17 @@ object AgentTools {
     }
 
     private fun runShell(context: Context, command: String, timeoutMs: Int): String {
-        // ponytail: no ulimit yet — per-command memory cap is M3.
-        val r = TermuxBridge.run(context, command, timeoutMs.coerceIn(1_000, 600_000))
+        val capMb = Limits.memoryCapMb(context)
+        // ulimit -v takes KB. Without a cap, one runaway command can get the whole
+        // app OOM-killed by the system; with it, the command dies instead.
+        val wrapped = if (capMb > 0) "ulimit -v ${capMb * 1024} 2>/dev/null; $command" else command
+        val r = TermuxBridge.run(context, wrapped, timeoutMs.coerceIn(1_000, 600_000))
         return when {
             r.error != null -> "Error: ${r.error}"
             r.exitCode == 0 -> r.output.ifBlank { "(selesai, tanpa output)" }
+            r.exitCode == 137 || r.output.contains("Cannot allocate memory") ->
+                "Error: perintah dihentikan karena melewati batas memori $capMb MB " +
+                    "(naikkan di Settings kalau memang butuh).\n${r.output}".trim()
             else -> "exit ${r.exitCode}\n${r.output}".take(MAX_OUTPUT + 40)
         }
     }

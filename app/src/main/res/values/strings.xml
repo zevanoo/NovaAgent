@@ -4,4 +4,5 @@
     <string name="channel_agent">Agent</string>
     <string name="notif_title">NovaAgent aktif</string>
     <string name="notif_text">Agent siap menerima task.</string>
+    <string name="notif_working">Menjalankan task…</string>
 </resources>

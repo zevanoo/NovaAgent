@@ -52,6 +52,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     val messages by vm.messages.collectAsState()
     val sessions by vm.sessions.collectAsState()
     val busy by vm.busy.collectAsState()
+    val status by vm.status.collectAsState()
     val error by vm.error.collectAsState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -125,6 +126,21 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(onClick = vm::clearError) { Text("Tutup") }
+                    }
+                }
+
+                if (busy) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            status.ifBlank { "Berjalan…" },
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = vm::stopTurn) { Text("Stop") }
                     }
                 }
 
