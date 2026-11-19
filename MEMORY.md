@@ -1,19 +1,48 @@
 # MEMORY.md — NovaAgent project log
 
 ## Status
-Milestone aktif: **M3 — Foreground service + memory cap**. M0–M2 selesai, APK signed di CI.
+Milestone aktif: **M4 — Memory file**. M0–M3 selesai, APK signed di CI.
 
 ## Milestone
 - [x] M0 — Scaffolding (APK debug terbangun di CI, signed, terverifikasi)
 - [x] M1 — UI/Provider (chat UI, settings provider, Room session, 6 slash command)
 - [x] M2 — Termux bridge (RUN_COMMAND + read_file/write_file/list_dir/run_shell + agent loop)
-- [ ] M3 — Foreground service + memory cap
+- [x] M3 — Foreground service + memory cap (loop di service, ulimit -v, watchdog)
 - [ ] M4 — Memory file
 - [ ] M5 — Sistem skill
 - [ ] M6 — File browser
 - [ ] M7 — Polish & stabilitas
 
 ## Log
+
+### M3 — Foreground service + memory cap (2026-11-19)
+Dibuat:
+- `AgentService` sekarang pemilik agent loop, bukan UI lagi. `onStartCommand`
+  dengan action `com.novaagent.app.RUN_TURN` + extra `sessionId`; history dibaca
+  dari Room, hasil ditulis balik ke Room, jadi turn selamat walau Activity mati.
+- `AgentState` jadi bus service ↔ UI: `running`, `busy`, `status`, `error`,
+  `turnDone`. UI menunggu `turnDone` lalu reload dari Room — tidak ada state
+  duplikat yang bisa basi.
+- Notifikasi persisten menampilkan baris tool yang sedang jalan
+  (`→ run_shell: ...`), bukan teks statis.
+- Watchdog `withTimeoutOrNull` 10 menit untuk seluruh turn; timeout per command
+  (default 120s) tetap ada di `TermuxBridge`.
+- `data/Limits.kt` — batas memori MB (0 = tanpa batas), diterapkan sebagai
+  `ulimit -v <MB*1024>` di setiap `run_shell`. Exit 137 / "Cannot allocate memory"
+  diterjemahkan jadi pesan jelas, bukan stderr mentah.
+- `ChatViewModel` menyusut: kirim pesan = tulis Room + `AgentService.startTurn()`,
+  plus `stopTurn()` yang mematikan service.
+- `SettingsScreen`: slider batas memori (langkah 64 MB, 0..2048 MB).
+- `ChatScreen`: baris status live + tombol Stop selama `busy`.
+
+Verifikasi:
+- CI run `44477334739` (commit `6e1ecb3`) **success**. APK 9.729.752 bytes,
+  10 dex, sha256 `2d2f785019e311041c2fefd0e04403c45664744a3dc8c1d5992695cd70879edd`.
+- **Belum diverifikasi di device:** turn yang bertahan saat app di-background,
+  `ulimit` benar-benar menahan perintah boros RAM, watchdog.
+- Catatan desain: `ulimit -v` membatasi *virtual* address space, jadi ia bisa
+  membunuh proses yang sebenarnya ramah RSS (mis. JVM/Node). Jangan set default
+  rendah — 0 (tanpa batas) tetap default.
 
 ### M2 — Termux bridge (2026-11-19)
 Dibuat:
@@ -106,6 +135,14 @@ Dibuat:
 - Ikon: adaptive icon (vector), warna `#D97757`.
 
 ## Keputusan
+- **Room adalah satu-satunya sumber kebenaran transcript.** Service menulis hasil
+  turn ke Room; UI reload dari Room saat `turnDone` berubah. Tidak ada buffer
+  pesan yang di-share antara UI dan service — itu sumber bug "balasan hilang".
+- **Agent loop di service sejak M3**, bukan di `viewModelScope`. Activity mati
+  bukan alasan turn ikut mati; notifikasi persisten jadi tempat status hidup.
+- **`ulimit -v` default 0 (tanpa batas).** Batasi *virtual* memory, jadi nilai
+  rendah bisa membunuh proses yang RSS-nya kecil (JVM/Node). User mengatur sendiri
+  di Settings; app hanya menyediakan rem, bukan menebak angka aman.
 - **Tool file-IO dijalankan lewat Termux**, bukan langsung dari app. Kalau
   `read_file` pakai `java.io.File` di app sandbox, model melihat dua namespace
   berbeda (path app vs path Termux) dan hasilnya membingungkan. Satu namespace.
