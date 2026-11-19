@@ -24,6 +24,9 @@ jobs:
           sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
 
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-read-only: false
 
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
