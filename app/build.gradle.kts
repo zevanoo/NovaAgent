@@ -21,10 +21,6 @@ android {
         compose = true
     }
 
-    // The bundled busybox is exec'd from nativeLibraryDir, which only works when
-    // the libs are really extracted at install time instead of mmap'd from the APK.
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
