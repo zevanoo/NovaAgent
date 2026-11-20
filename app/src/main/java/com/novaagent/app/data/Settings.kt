@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /** Provider connection settings. Deliberately not persisted yet — M1 keeps it in memory. */
 data class ProviderConfig(
+    val providerId: String = java.util.UUID.randomUUID().toString(),
     val baseUrl: String = DEFAULT_BASE_URL,
     val apiKey: String = "",
     val model: String = DEFAULT_MODEL,
@@ -22,13 +23,14 @@ data class ProviderConfig(
         return if (base.endsWith("/v1")) "$base/$path" else "$base/v1/$path"
     }
 
-    fun toJson() = org.json.JSONObject().put("name", name).put("baseUrl", baseUrl)
+    fun toJson() = org.json.JSONObject().put("id", providerId).put("name", name).put("baseUrl", baseUrl)
         .put("apiKey", apiKey).put("model", model).put("fallbackModel", fallbackModel).put("providerType", providerType)
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         const val DEFAULT_MODEL = "gpt-4o-mini"
         fun fromJson(o: org.json.JSONObject) = ProviderConfig(
+            providerId = o.optString("id", java.util.UUID.randomUUID().toString()),
             baseUrl = o.optString("baseUrl", DEFAULT_BASE_URL),
             apiKey = o.optString("apiKey"),
             model = o.optString("model", DEFAULT_MODEL),

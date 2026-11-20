@@ -73,7 +73,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val saved by Settings.config.collectAsState()
     val providerList by Settings.providers.collectAsState()
-    val activeIndex = providerList.indexOfFirst { it.name == saved.name }.coerceAtLeast(0)
+    val activeIndex = providerList.indexOfFirst { it.providerId == saved.providerId }.coerceAtLeast(0)
     val running by AgentState.running.collectAsState()
 
     var providerName by remember { mutableStateOf(saved.name) }
@@ -206,7 +206,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 TextButton(onClick = {
                     val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider" }, providerType)
                     val list = providerList.toMutableList()
-                    val index = list.indexOfFirst { it.name == saved.name }
+                    val index = list.indexOfFirst { it.providerId == saved.providerId }
                     if (index >= 0) list[index] = current else list += current
                     Settings.save(context, list, index.takeIf { it >= 0 } ?: list.lastIndex)
                     note = "Provider disimpan."
