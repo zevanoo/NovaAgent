@@ -55,6 +55,7 @@ import com.novaagent.app.data.I18n
 import com.novaagent.app.data.AppFiles
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
+import com.novaagent.app.net.McpClient
 import com.novaagent.app.data.ProviderConfig
 import com.novaagent.app.data.Settings
 import com.novaagent.app.data.Skills
@@ -89,6 +90,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     var skillEpoch by remember { mutableStateOf(0) }
     var note by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    var mcpName by remember { mutableStateOf("") }
+    var mcpEndpoint by remember { mutableStateOf("") }
+    var mcpToken by remember { mutableStateOf("") }
+    var mcpStatus by remember { mutableStateOf("") }
 
     val termuxStatus = TermuxBridge.status(context)
     val workdir = Workspace.defaultDir(context)
@@ -245,7 +250,30 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             Divider()
+            Section("MCP")
+            BodyText("MCP Streamable HTTP. HTTPS wajib; HTTP hanya localhost/private LAN.")
+            OutlinedTextField(value = mcpName, onValueChange = { mcpName = it }, label = { Text("Nama server") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = mcpEndpoint, onValueChange = { mcpEndpoint = it }, label = { Text("Endpoint MCP") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = mcpToken, onValueChange = { mcpToken = it }, label = { Text("Token MCP") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            Row {
+                TextButton(onClick = {
+                    val list = McpClient.servers(context).filterNot { it.name == mcpName } + McpClient.Server(mcpName.trim(), mcpEndpoint.trim(), mcpToken)
+                    McpClient.save(context, list)
+                    mcpStatus = "MCP server disimpan."
+                }) { Text("Simpan MCP") }
+                TextButton(onClick = {
+                    scope.launch { mcpStatus = withContext(Dispatchers.IO) { runCatching { "${McpClient.listTools(context).size} MCP tools ditemukan." }.getOrElse { "MCP gagal: ${it.message}" } } }
+                }) { Text("Tes/discover MCP") }
+            }
+            McpClient.servers(context).forEach { server ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${server.name}: ${server.endpoint}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+                    TextButton(onClick = { McpClient.save(context, McpClient.servers(context).filterNot { it.name == server.name }); mcpStatus = "MCP dihapus." }) { Text("Hapus") }
+                }
+            }
+            if (mcpStatus.isNotBlank()) BodyText(mcpStatus)
 
+            Divider()
             Section("Workdir")
             BodyText(
                 "Satu setting saja: folder induk. Agent membuat folder per sesi di dalamnya " +
