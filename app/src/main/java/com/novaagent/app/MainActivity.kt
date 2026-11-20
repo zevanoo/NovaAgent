@@ -40,10 +40,11 @@ private fun Root() {
     // running. Without this the UI showed an idle chat while the notification said
     // the agent was working.
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+    val context = LocalContext.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, context) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
-                com.novaagent.app.service.AgentService.queryState(LocalContext.current)
+                com.novaagent.app.service.AgentService.queryState(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
