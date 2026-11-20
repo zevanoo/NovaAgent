@@ -120,7 +120,8 @@ object AgentTools {
         workdir: String,
         timeoutMs: Int = DEFAULT_COMMAND_TIMEOUT_MS,
         ensureSessionDir: () -> String = { workdir },
-    ): String = try {
+    ): String {
+        return try {
         // Mutating tools get the session's own project folder, created on first use.
         // Read-only tools stay on the default dir so a question does not create a folder.
         val dir = if (name == "write_file" || name == "run_shell" || name == "save_memory") {
@@ -128,10 +129,8 @@ object AgentTools {
         } else {
             workdir
         }
-        if (name.startsWith("mcp_")) {
-            return McpClient.invoke(context, name, args)
-        }
-        when (name) {
+        if (name.startsWith("mcp_")) McpClient.invoke(context, name, args)
+        else when (name) {
             "read_file" -> readFile(context, args.optString("path"), args, dir)
             "write_file" -> writeFile(context, args.optString("path"), args.optString("content"), dir)
             "list_dir" -> listDir(context, args.optString("path"), dir)
@@ -146,8 +145,9 @@ object AgentTools {
             "use_skill" -> Skills.body(context, dir, args.optString("name"))
             else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell, save_memory, use_skill."
         }
-    } catch (e: Exception) {
-        "Error: " + (e.message ?: e.javaClass.simpleName)
+        } catch (e: Exception) {
+            "Error: " + (e.message ?: e.javaClass.simpleName)
+        }
     }
 
     const val DEFAULT_COMMAND_TIMEOUT_MS = 120_000

@@ -88,6 +88,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var autoWrite by remember { mutableStateOf(Limits.isAutoWrite(context)) }
     var skillEpoch by remember { mutableStateOf(0) }
     var note by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     val termuxStatus = TermuxBridge.status(context)
     val workdir = Workspace.defaultDir(context)
