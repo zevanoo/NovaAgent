@@ -399,8 +399,14 @@ private fun Composer(
     val enabled = !busy && value.isNotBlank()
     val sendAlpha by animateFloatAsState(if (enabled) 1f else 0.35f, label = "sendAlpha")
     val commands = listOf("/help", "/compact", "/clear", "/memory", "/skill", "/model", "/termux", "/limit")
-    val suggestions = if (value.startsWith("/") && !value.contains(' '))
-        commands.filter { it.startsWith(value, ignoreCase = true) }.take(6) else emptyList()
+    val suggestions = when {
+        value.startsWith("/") && !value.contains(' ') -> commands.filter { it.startsWith(value, ignoreCase = true) }.take(6)
+        value.startsWith("/memory ") -> listOf("soul", "user", "project", "approve", "reject", "edit")
+            .filter { it.startsWith(value.substringAfterLast(' '), ignoreCase = true) }.map { "/memory $it" }
+        value.startsWith("/skill ") -> listOf("list", "install", "remove")
+            .filter { it.startsWith(value.substringAfterLast(' '), ignoreCase = true) }.map { "/skill $it" }
+        else -> emptyList()
+    }
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -553,7 +559,7 @@ private fun ToolRows(rounds: List<UiRound>) {
 private fun ToolRow(r: UiRound) {
     var showResult by remember(r) { mutableStateOf(false) }
     var showThought by remember(r) { mutableStateOf(false) }
-    val chevron by animateFloatAsState(if (showResult) 90f else 0f, label = "chevron")
+    val chevron by animateFloatAsState(if (showResult || showThought) 90f else 0f, label = "chevron")
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -581,20 +587,16 @@ private fun ToolRow(r: UiRound) {
                     modifier = Modifier.weight(1f),
                 )
             }
-            if (r.thought.isNotBlank()) {
-                Text(
-                    if (showThought) r.thought else "… ${r.thought.lineSequence().first().take(90)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (showThought) 12 else 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showThought = !showThought }
-                        .padding(top = 2.dp),
-                )
-            }
-            AnimatedVisibility(
+                if (r.thought.isNotBlank()) {
+                    TextButton(onClick = { showThought = !showThought }) { Text(if (showThought) "Thought ▾" else "Thought ▸") }
+                    AnimatedVisibility(visible = showThought, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                        SelectionContainer { Text(r.thought, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth()) }
+                    }
+                }
+                TextButton(onClick = { showResult = !showResult }) {
+                    Text(if (showResult) "Command detail ▾" else "Command detail ▸")
+                }
+                AnimatedVisibility(
                 visible = showResult,
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically(),

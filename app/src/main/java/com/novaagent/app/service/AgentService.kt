@@ -60,6 +60,8 @@ class AgentService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
+        // Persisted provider keys must be readable even if the service restarts without the UI.
+        com.novaagent.app.data.Settings.load(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

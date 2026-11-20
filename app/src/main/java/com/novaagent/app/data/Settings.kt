@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** Provider connection settings. Deliberately not persisted yet — M1 keeps it in memory. */
+/** Provider connection settings. API keys are persisted in [SecretStore], never in plain SharedPreferences. */
 data class ProviderConfig(
     val providerId: String = java.util.UUID.randomUUID().toString(),
     val baseUrl: String = DEFAULT_BASE_URL,
@@ -24,7 +24,7 @@ data class ProviderConfig(
     }
 
     fun toJson() = org.json.JSONObject().put("id", providerId).put("name", name).put("baseUrl", baseUrl)
-        .put("apiKey", apiKey).put("model", model).put("fallbackModel", fallbackModel).put("providerType", providerType)
+        .put("model", model).put("fallbackModel", fallbackModel).put("providerType", providerType)
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -55,13 +55,24 @@ object Settings {
         val array = runCatching { org.json.JSONArray(prefs.getString("providers", "[]")) }
             .getOrDefault(org.json.JSONArray())
         val list = (0 until array.length()).mapNotNull { i ->
-            array.optJSONObject(i)?.let { ProviderConfig.fromJson(it).copy(apiKey = SecretStore.get(context, "provider-$i")) }
+            array.optJSONObject(i)?.let { o ->
+                val id = o.optString("id", "provider-$i")
+                val secret = SecretStore.get(context, id)
+                ProviderConfig.fromJson(o).copy(providerId = id, apiKey = secret)
+            }
         }.toMutableList()
-        if (list.isEmpty()) list += ProviderConfig(
-            baseUrl = prefs.getString("baseUrl", ProviderConfig.DEFAULT_BASE_URL) ?: ProviderConfig.DEFAULT_BASE_URL,
-            apiKey = prefs.getString("apiKey", "") ?: "",
-            model = prefs.getString("model", ProviderConfig.DEFAULT_MODEL) ?: ProviderConfig.DEFAULT_MODEL,
-        )
+        if (list.isEmpty()) {
+            val legacyKey = prefs.getString("apiKey", "").orEmpty()
+            list += ProviderConfig(
+                baseUrl = prefs.getString("baseUrl", ProviderConfig.DEFAULT_BASE_URL) ?: ProviderConfig.DEFAULT_BASE_URL,
+                apiKey = legacyKey,
+                model = prefs.getString("model", ProviderConfig.DEFAULT_MODEL) ?: ProviderConfig.DEFAULT_MODEL,
+            )
+            if (legacyKey.isNotBlank()) {
+                SecretStore.put(context, list[0].providerId, legacyKey)
+                prefs.edit().remove("apiKey").apply()
+            }
+        }
         val index = prefs.getInt("activeProvider", 0).coerceIn(0, list.lastIndex)
         _providers.value = list
         _config.value = list[index]
@@ -75,14 +86,14 @@ object Settings {
         context.getSharedPreferences("novaagent", 0).edit()
             .putString("providers", org.json.JSONArray().apply { sanitized.forEach { put(it.toJson()) } }.toString())
             .putInt("activeProvider", index).apply()
-        providers.forEachIndexed { i, provider -> SecretStore.put(context, "provider-$i", provider.apiKey) }
+        providers.forEach { provider -> SecretStore.put(context, provider.providerId, provider.apiKey) }
         _providers.value = providers
         _config.value = providers[index]
     }
 
     fun update(config: ProviderConfig) {
         val list = _providers.value.toMutableList()
-        val index = list.indexOfFirst { it.name == _config.value.name }
+        val index = list.indexOfFirst { it.providerId == config.providerId }
         if (index >= 0) list[index] = config else list += config
         _providers.value = list
         _config.value = config

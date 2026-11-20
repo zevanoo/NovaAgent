@@ -206,10 +206,18 @@ fun SettingsScreen(onBack: () -> Unit) {
             models.take(20).forEach { id ->
                 TextButton(onClick = { model = id }) { Text(id) }
             }
-            BodyText("Endpoint: " + ProviderConfig(baseUrl, apiKey, model).chatEndpoint)
+            BodyText("Endpoint: " + ProviderConfig(baseUrl = baseUrl, apiKey = apiKey, model = model).chatEndpoint)
             Row {
                 TextButton(onClick = {
-                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider" }, providerType)
+                    val current = ProviderConfig(
+                        providerId = saved.providerId,
+                        baseUrl = baseUrl.trim(),
+                        apiKey = apiKey.trim(),
+                        model = model.trim(),
+                        fallbackModel = fallbackModel.trim(),
+                        name = providerName.trim().ifBlank { "Provider" },
+                        providerType = providerType,
+                    )
                     val list = providerList.toMutableList()
                     val index = list.indexOfFirst { it.providerId == saved.providerId }
                     if (index >= 0) list[index] = current else list += current
@@ -217,7 +225,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                     note = "Provider disimpan."
                 }) { Text("Simpan provider") }
                 TextButton(onClick = {
-                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider ${providerList.size + 1}" }, providerType)
+                    val current = ProviderConfig(
+                        baseUrl = baseUrl.trim(),
+                        apiKey = apiKey.trim(),
+                        model = model.trim(),
+                        fallbackModel = fallbackModel.trim(),
+                        name = providerName.trim().ifBlank { "Provider ${providerList.size + 1}" },
+                        providerType = providerType,
+                    )
                     val list = providerList + current
                     Settings.save(context, list, list.lastIndex)
                     note = "Provider ditambahkan dan dipilih."
@@ -257,13 +272,21 @@ fun SettingsScreen(onBack: () -> Unit) {
             OutlinedTextField(value = mcpToken, onValueChange = { mcpToken = it }, label = { Text("Token MCP") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
             Row {
                 TextButton(onClick = {
-                    val list = McpClient.servers(context).filterNot { it.name == mcpName } + McpClient.Server(mcpName.trim(), mcpEndpoint.trim(), mcpToken)
+                    val server = McpClient.Server(mcpName.trim(), mcpEndpoint.trim(), mcpToken)
+                    val list = McpClient.servers(context).filterNot { it.name == server.name } + server
                     McpClient.save(context, list)
                     mcpStatus = "MCP server disimpan."
                 }) { Text("Simpan MCP") }
                 TextButton(onClick = {
-                    scope.launch { mcpStatus = withContext(Dispatchers.IO) { runCatching { "${McpClient.listTools(context).size} MCP tools ditemukan." }.getOrElse { "MCP gagal: ${it.message}" } } }
-                }) { Text("Tes/discover MCP") }
+                    scope.launch {
+                        McpClient.save(context, McpClient.servers(context).filterNot { it.name == mcpName.trim() } +
+                            McpClient.Server(mcpName.trim(), mcpEndpoint.trim(), mcpToken))
+                        mcpStatus = withContext(Dispatchers.IO) {
+                            runCatching { "${McpClient.listTools(context).size} MCP tools ditemukan." }
+                                .getOrElse { "MCP gagal: ${it.message}" }
+                        }
+                    }
+                }) { Text("Simpan + discover") }
             }
             McpClient.servers(context).forEach { server ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

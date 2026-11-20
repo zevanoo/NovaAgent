@@ -19,24 +19,40 @@ object SkillMarketplace {
             val archive = File(staging, "skill.zip")
             val url = if (uri.contains("github.com/") && !uri.endsWith(".zip"))
                 uri.trimEnd('/') + "/archive/refs/heads/main.zip" else uri
-            connection = URL(url).openConnection() as HttpURLConnection
-            val conn = connection!!
-            conn.instanceFollowRedirects = false
-            conn.connectTimeout = 15_000; conn.readTimeout = 60_000
-            if (conn.responseCode !in 200..299) return "Error: download HTTP ${conn.responseCode}"
-            val size = conn.contentLengthLong
-            if (size > MAX_ARCHIVE_BYTES) return "Error: archive melewati batas 5 MB."
-            var downloaded = 0L
-            conn.inputStream.use { input -> archive.outputStream().use { output ->
-                val buffer = ByteArray(8192)
-                while (true) {
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    downloaded += n
-                    if (downloaded > MAX_ARCHIVE_BYTES) return "Error: archive melewati batas 5 MB."
-                    output.write(buffer, 0, n)
-                }
-            } }
+        val responseUrl = URL(url)
+        if (responseUrl.protocol != "https" || responseUrl.host !in setOf("github.com", "codeload.github.com", "raw.githubusercontent.com")) {
+            return "Error: URL download di luar host GitHub yang diizinkan."
+        }
+        connection = responseUrl.openConnection() as HttpURLConnection
+        val conn = connection!!
+        conn.instanceFollowRedirects = false
+        conn.connectTimeout = 15_000; conn.readTimeout = 60_000
+        var code = conn.responseCode
+        if (code in 300..399) {
+            val location = conn.getHeaderField("Location") ?: return "Error: redirect skill tanpa Location."
+            val redirected = URL(responseUrl, location)
+            if (redirected.protocol != "https" || redirected.host !in setOf("github.com", "codeload.github.com"))
+                return "Error: redirect ke host di luar GitHub ditolak."
+            conn.disconnect()
+            connection = redirected.openConnection() as HttpURLConnection
+            connection!!.connectTimeout = 15_000; connection!!.readTimeout = 60_000
+            code = connection!!.responseCode
+        }
+        if (code !in 200..299) return "Error: download HTTP $code"
+        val connFinal = connection!!
+        val size = connFinal.contentLengthLong
+        if (size > MAX_ARCHIVE_BYTES) return "Error: archive melewati batas 5 MB."
+        var downloaded = 0L
+        connFinal.inputStream.use { input -> archive.outputStream().use { output ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                downloaded += n
+                if (downloaded > MAX_ARCHIVE_BYTES) return "Error: archive melewati batas 5 MB."
+                output.write(buffer, 0, n)
+            }
+        } }
             val extracted = File(staging, "unpacked").apply { mkdirs() }
             var count = 0
             var expanded = 0L

@@ -149,7 +149,7 @@ object AgentTools {
             val tool = args.optString("tool")
             if (!com.novaagent.app.data.CommandApproval.await(context, "mcp_call $server $tool")) return "Rejected by user or approval timeout."
         }
-        if (name.startsWith("mcp_")) McpClient.invoke(context, name, args)
+        if (name.startsWith("mcp_") && name != "mcp_call") McpClient.invoke(context, name, args)
         else when (name) {
             "mcp_call" -> McpClient.call(context, args.optString("server"), args.optString("tool"), args.optJSONObject("arguments") ?: JSONObject())
             "read_file" -> readFile(context, args.optString("path"), args, dir)
