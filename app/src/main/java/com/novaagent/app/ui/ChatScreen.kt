@@ -108,6 +108,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     val error by vm.error.collectAsState()
     val limitHit by vm.limitHit.collectAsState()
     val pendingVersion by vm.pendingMemory.collectAsState()
+    val pendingApproval by com.novaagent.app.data.CommandApproval.pending.collectAsState()
     val workdirVersion by AgentState.workdirVersion.collectAsState()
     val sessionDir by AgentState.sessionDir.collectAsState()
 
@@ -330,6 +331,23 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
         )
     }
 
+    if (pendingApproval != null) {
+        val req = pendingApproval!!
+        AlertDialog(
+            onDismissRequest = { com.novaagent.app.data.CommandApproval.approve(req.command, "reject") },
+            title = { Text("Approval command · ${req.risk.label}") },
+            text = { SelectionContainer { Text(req.command, style = monoStyle(12)) } },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "once") }) { Text("Allow once") }
+                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "session") }) { Text("This session") }
+                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "always") }) { Text("Always") }
+                }
+            },
+            dismissButton = { TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "reject") }) { Text("Reject") } },
+        )
+    }
+
     if (toast.isNotBlank()) {
         AlertDialog(
             onDismissRequest = { toast = "" },
@@ -380,6 +398,9 @@ private fun Composer(
 ) {
     val enabled = !busy && value.isNotBlank()
     val sendAlpha by animateFloatAsState(if (enabled) 1f else 0.35f, label = "sendAlpha")
+    val commands = listOf("/help", "/compact", "/clear", "/memory", "/skill", "/model", "/termux", "/limit")
+    val suggestions = if (value.startsWith("/") && !value.contains(' '))
+        commands.filter { it.startsWith(value, ignoreCase = true) }.take(6) else emptyList()
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -388,43 +409,41 @@ private fun Composer(
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime)),
     ) {
-        Row(
-            Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                maxLines = 6,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 44.dp)
-                    .padding(vertical = Spacing.sm),
-                decorationBox = { inner ->
-                    if (value.isEmpty()) {
-                        Text(
-                            t("composer_hint"),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    inner()
-                },
-            )
-            Spacer(Modifier.width(Spacing.sm))
-            FilledTonalIconButton(
-                onClick = if (busy) onStop else onSend,
-                enabled = busy || enabled,
-                modifier = Modifier.size(44.dp).alpha(if (busy) 1f else sendAlpha),
+        Column {
+            suggestions.forEach { suggestion ->
+                TextButton(
+                    onClick = { onValueChange("$suggestion ") },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(suggestion, modifier = Modifier.fillMaxWidth()) }
+            }
+            Row(
+                Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                verticalAlignment = Alignment.Bottom,
             ) {
-                Icon(
-                    if (busy) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                    contentDescription = if (busy) t("stop") else t("send"),
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    maxLines = 6,
+                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).padding(vertical = Spacing.sm),
+                    decorationBox = { inner ->
+                        if (value.isEmpty()) Text(t("composer_hint"), style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        inner()
+                    },
                 )
+                Spacer(Modifier.width(Spacing.sm))
+                FilledTonalIconButton(
+                    onClick = if (busy) onStop else onSend,
+                    enabled = busy || enabled,
+                    modifier = Modifier.size(44.dp).alpha(if (busy) 1f else sendAlpha),
+                ) {
+                    Icon(
+                        if (busy) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (busy) t("stop") else t("send"),
+                    )
+                }
             }
         }
     }
@@ -506,11 +525,27 @@ private fun WorkdirDialog(
 /** Collapsible tool rows. Row toggles the result; the thought line toggles the reasoning. */
 @Composable
 private fun ToolRows(rounds: List<UiRound>) {
+    var expanded by remember { mutableStateOf(false) }
     Column(
         Modifier.padding(start = Spacing.sm),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        rounds.forEach { ToolRow(it) }
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        ) {
+            Column(Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm)) {
+                Text("${if (expanded) "▾" else "▸"} Aktivitas agent · ${rounds.size}",
+                    style = MaterialTheme.typography.labelMedium)
+                AnimatedVisibility(visible = expanded, enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        rounds.forEach { ToolRow(it) }
+                    }
+                }
+            }
+        }
     }
 }
 

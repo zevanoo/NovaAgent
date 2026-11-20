@@ -8,6 +8,7 @@ import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Skills
 import com.novaagent.app.net.LlmClient
+import com.novaagent.app.net.McpClient
 import com.novaagent.app.net.ToolCall
 import org.json.JSONArray
 import org.json.JSONObject
@@ -74,15 +75,22 @@ object AgentTools {
         ))
         put(tool(
             "save_memory",
-            "Simpan catatan ke memory. target=USER (preferensi user, berlaku semua project), " +
-                "SOUL (persona agent), atau PROJECT (konteks mendalam project aktif, hanya " +
-                "dimuat saat workdir di project ini). Tulis fakta yang berguna untuk sesi " +
-                "berikutnya, bukan ringkasan percakapan.",
+            "Simpan catatan ke memory. target=USER, SOUL, atau PROJECT.",
             JSONObject().apply {
                 prop("target", "string", "USER, SOUL, atau PROJECT")
                 prop("note", "string", "Catatan singkat yang disimpan")
             },
             listOf("target", "note"),
+        ))
+        put(tool(
+            "mcp_call",
+            "Panggil tool MCP yang sudah dikonfigurasi. Discovery server MCP tetap dibatasi URL HTTP(S) lokal/HTTPS.",
+            JSONObject().apply {
+                prop("server", "string", "Nama server MCP")
+                prop("tool", "string", "Nama tool MCP")
+                prop("arguments", "object", "Argumen tool")
+            },
+            listOf("server", "tool"),
         ))
     }.toString()
 
@@ -120,11 +128,20 @@ object AgentTools {
         } else {
             workdir
         }
+        if (name.startsWith("mcp_")) {
+            return McpClient.invoke(context, name, args)
+        }
         when (name) {
             "read_file" -> readFile(context, args.optString("path"), args, dir)
             "write_file" -> writeFile(context, args.optString("path"), args.optString("content"), dir)
             "list_dir" -> listDir(context, args.optString("path"), dir)
             "run_shell" -> runShell(context, args, timeoutMs, dir)
+            "mcp_call" -> McpClient.call(
+                context,
+                args.optString("server"),
+                args.optString("tool"),
+                args.optJSONObject("arguments") ?: JSONObject(),
+            )
             "save_memory" -> saveMemory(context, args.optString("target"), args.optString("note"), dir)
             "use_skill" -> Skills.body(context, dir, args.optString("name"))
             else -> "Error: tool tidak dikenal '$name'. Tersedia: read_file, write_file, list_dir, run_shell, save_memory, use_skill."
@@ -169,6 +186,7 @@ object AgentTools {
     private fun runShell(context: Context, args: JSONObject, timeoutMs: Int, cwd: String): String {
         val command = args.optString("command")
         if (command.isBlank()) return "Error: command kosong."
+        if (!com.novaagent.app.data.CommandApproval.await(command)) return "Rejected by user or approval timeout."
         val where = args.optString("cwd").trim().ifBlank { cwd }
         val capMb = Limits.memoryCapMb(context)
 
@@ -284,7 +302,14 @@ object AgentLoop {
                 )
             }
             val response = LlmClient.chatWithTools(
-                com.novaagent.app.data.Settings.config.value, messages, system, AgentTools.defs,
+                com.novaagent.app.data.Settings.config.value,
+                messages,
+                system,
+                JSONArray(AgentTools.defs).let { base ->
+                    val mcp = runCatching { com.novaagent.app.net.McpClient.definitions(context) }.getOrDefault(JSONArray())
+                    (0 until mcp.length()).forEach { base.put(mcp.get(it)) }
+                    base.toString()
+                },
             )
             val text = response.content.trim()
 

@@ -72,11 +72,16 @@ import com.novaagent.app.ui.theme.monoStyle
 fun SettingsScreen(onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val saved by Settings.config.collectAsState()
+    val providerList by Settings.providers.collectAsState()
+    val activeIndex = providerList.indexOfFirst { it.name == saved.name }.coerceAtLeast(0)
     val running by AgentState.running.collectAsState()
 
+    var providerName by remember { mutableStateOf(saved.name) }
     var baseUrl by remember { mutableStateOf(saved.baseUrl) }
     var apiKey by remember { mutableStateOf(saved.apiKey) }
     var model by remember { mutableStateOf(saved.model) }
+    var fallbackModel by remember { mutableStateOf(saved.fallbackModel) }
+    var models by remember { mutableStateOf(emptyList<String>()) }
     var defaultDir by remember { mutableStateOf(Workspace.defaultDir(context)) }
     var capMb by remember { mutableStateOf(Limits.memoryCapMb(context)) }
     var rounds by remember { mutableStateOf(Limits.maxRounds(context)) }
@@ -125,6 +130,23 @@ fun SettingsScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
             Section("Provider")
+            providerList.forEachIndexed { index, provider ->
+                TextButton(onClick = {
+                    Settings.select(context, index)
+                    providerName = provider.name
+                    baseUrl = provider.baseUrl
+                    apiKey = provider.apiKey
+                    model = provider.model
+                    fallbackModel = provider.fallbackModel
+                }) { Text((if (provider == saved) "● " else "○ ") + provider.name) }
+            }
+            OutlinedTextField(
+                value = providerName,
+                onValueChange = { providerName = it },
+                label = { Text("Nama provider") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
             OutlinedTextField(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
@@ -143,15 +165,59 @@ fun SettingsScreen(onBack: () -> Unit) {
             OutlinedTextField(
                 value = model,
                 onValueChange = { model = it },
-                label = { Text("Model") },
+                label = { Text("Model utama") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            BodyText("Endpoint: " + ProviderConfig(baseUrl, apiKey, model).chatEndpoint)
+            OutlinedTextField(
+                value = fallbackModel,
+                onValueChange = { fallbackModel = it },
+                label = { Text("Model fallback (setelah 4 percobaan utama)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
             TextButton(onClick = {
-                Settings.update(ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim()))
-                onBack()
-            }) { Text("Simpan") }
+                note = "Mengambil /v1/models..."
+                scope.launch {
+                    val result = runCatching {
+                        withContext(Dispatchers.IO) {
+                            com.novaagent.app.net.LlmClient.fetchModels(
+                                ProviderConfig(baseUrl = baseUrl, apiKey = apiKey, model = model),
+                            )
+                        }
+                    }
+                    models = result.getOrDefault(emptyList())
+                    note = result.exceptionOrNull()?.message ?: "${models.size} model ditemukan."
+                }
+            }) { Text("Ambil model dari /v1/models") }
+            models.take(20).forEach { id ->
+                TextButton(onClick = { model = id }) { Text(id) }
+            }
+            BodyText("Endpoint: " + ProviderConfig(baseUrl, apiKey, model).chatEndpoint)
+            Row {
+                TextButton(onClick = {
+                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider" })
+                    val list = providerList.toMutableList()
+                    val index = list.indexOfFirst { it.name == saved.name }
+                    if (index >= 0) list[index] = current else list += current
+                    Settings.save(context, list, index.takeIf { it >= 0 } ?: list.lastIndex)
+                    note = "Provider disimpan."
+                }) { Text("Simpan provider") }
+                TextButton(onClick = {
+                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider ${providerList.size + 1}" })
+                    val list = providerList + current
+                    Settings.save(context, list, list.lastIndex)
+                    note = "Provider ditambahkan dan dipilih."
+                }) { Text("Tambah provider") }
+            }
+            if (providerList.size > 1) {
+                TextButton(onClick = {
+                    val list = providerList.toMutableList()
+                    if (activeIndex in list.indices) list.removeAt(activeIndex)
+                    if (list.isNotEmpty()) Settings.save(context, list, 0)
+                    note = "Provider dihapus."
+                }) { Text("Hapus provider aktif") }
+            }
 
             Divider()
 

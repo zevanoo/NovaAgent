@@ -28,16 +28,65 @@ data class Reply(
  */
 object LlmClient {
 
+    fun fetchModels(config: ProviderConfig): List<String> {
+        val conn = (URL(config.modelsEndpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            if (config.apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer " + asciiOnly(config.apiKey))
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IOException("HTTP $code: " + text.take(300))
+            val data = JSONObject(text).optJSONArray("data") ?: JSONArray()
+            return (0 until data.length()).mapNotNull { data.optJSONObject(it)?.optString("id") }
+                .filter { it.isNotBlank() }.distinct().sorted()
+        } finally { conn.disconnect() }
+    }
+
     fun chatWithTools(
         config: ProviderConfig,
         messages: List<JSONObject>,
         system: String?,
         tools: String?,
     ): Reply {
-        if (!config.isUsable) throw IOException("Provider belum diatur: isi API key dan model di Settings.")
+        if (!config.isUsable) throw IOException("Provider belum diatur: isi base URL dan model di Settings.")
+
+        val primary = config.model
+        var last: IOException? = null
+        repeat(4) { attempt ->
+            try {
+                return request(config, primary, messages, system, tools)
+            } catch (e: IOException) {
+                last = e
+                if (attempt < 3) Thread.sleep(500L * (attempt + 1))
+            }
+        }
+        val fallback = config.fallbackModel.trim()
+        if (fallback.isNotBlank() && fallback != primary) {
+            try {
+                return request(config.copy(model = fallback), fallback, messages, system, tools)
+            } catch (e: IOException) {
+                last = IOException("Model utama '$primary' gagal 4 kali; fallback '$fallback' juga gagal: ${e.message}", e)
+            }
+        }
+        throw last ?: IOException("Model '$primary' gagal.")
+    }
+
+    private fun request(
+        config: ProviderConfig,
+        model: String,
+        messages: List<JSONObject>,
+        system: String?,
+        tools: String?,
+    ): Reply {
+        if (!config.isUsable) throw IOException("Provider belum diatur: isi base URL dan model di Settings.")
 
         val payload = JSONObject().apply {
-            put("model", config.model)
+            put("model", model)
             put("messages", JSONArray().apply {
                 system?.takeIf { it.isNotBlank() }?.let {
                     put(JSONObject().put("role", "system").put("content", it))

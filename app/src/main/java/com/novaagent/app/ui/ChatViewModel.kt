@@ -122,6 +122,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val limitHit = AgentState.limitHit
 
     init {
+        Settings.load(app)
         welcome = I18n.welcome(app)
         // After the app was killed and reopened, AgentState is empty but the
         // service may still be mid-turn. Ask it, so the progress row and the Stop

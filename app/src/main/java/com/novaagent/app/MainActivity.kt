@@ -20,6 +20,7 @@ import com.novaagent.app.ui.theme.NovaAgentTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.novaagent.app.data.Settings.load(this)
         setContent {
             NovaAgentTheme { Root() }
         }
