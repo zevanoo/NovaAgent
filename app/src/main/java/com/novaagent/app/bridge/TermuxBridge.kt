@@ -112,7 +112,7 @@ object TermuxBridge {
         val workIn = cwd.takeIf { it.isNotBlank() && AppFiles.isInsideSandbox(context, it) } ?: sandbox
         val script = """
             export HOME=${shellQuote(AppFiles.shellHome(context).absolutePath)}
-            cd ${shellQuote(workIn)} 2>/dev/null || cd "$HOME"
+            cd ${shellQuote(workIn)} 2>/dev/null || cd ${'$'}HOME
             { $command ; } 2>&1 | tee ${shellQuote(outFile.absolutePath)}
             exit ${'$'}{PIPESTATUS[0]}
         """.trimIndent()
