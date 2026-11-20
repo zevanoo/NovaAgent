@@ -36,6 +36,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +47,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material3.OutlinedTextField
 import androidx.core.content.ContextCompat
 import com.novaagent.app.bridge.TermuxBridge
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.novaagent.app.data.AgentState
 import com.novaagent.app.data.I18n
 import com.novaagent.app.data.AppFiles
@@ -279,9 +283,31 @@ fun SettingsScreen(onBack: () -> Unit) {
             Section("Shell")
             BodyText(termuxStatus)
             BodyText(
-                "Shell bawaan ikut di dalam app — tidak perlu Termux atau Termux:API. " +
-                    "File kerja ada di Android/media/" + context.packageName + ".",
+                "Perintah dijalankan lewat Termux (bukan Termux:API). File kerja ada di " +
+                    AppFiles.root(context).absolutePath + ".",
             )
+            // Direct probe: shows Termux's own rejection reason instead of making the
+            // user infer it from a failed agent turn.
+            val scope = rememberCoroutineScope()
+            var test by remember { mutableStateOf("") }
+            TextButton(onClick = {
+                test = "Menjalankan tes..."
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) {
+                        TermuxBridge.run(
+                            context,
+                            "echo NOVA_OK; echo HOME=\$HOME; echo PWD=\$(pwd); id -un 2>/dev/null; " +
+                                "which bash git python echo",
+                            60_000,
+                        )
+                    }
+                    test = when {
+                        r.error != null -> r.error!!
+                        else -> "exit ${r.exitCode}\n${r.output.ifBlank { "(tanpa output)" }}"
+                    }
+                }
+            }) { Text("Tes Termux") }
+            if (test.isNotBlank()) BodyText(test)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Agent service", style = MaterialTheme.typography.bodyMedium)

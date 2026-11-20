@@ -306,9 +306,13 @@ object AgentLoop {
                 } else {
                     commandTimeoutMs
                 }
-                val result = AgentTools.execute(
-                    context, call.name, call.arguments, workdir, timeout, ensureSessionDir,
-                )
+                // run_shell blocks on Termux's reply, which can be minutes; running
+                // it on the caller's thread would freeze whatever dispatcher that is.
+                val result = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    AgentTools.execute(
+                        context, call.name, call.arguments, workdir, timeout, ensureSessionDir,
+                    )
+                }
                 messages.add(toolResultMessage(call.id, result))
                 val round = ToolRound(call.name, summarize(call.arguments), text, result)
                 rounds += round
