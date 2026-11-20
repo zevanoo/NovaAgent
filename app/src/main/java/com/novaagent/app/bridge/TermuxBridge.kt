@@ -105,17 +105,17 @@ object TermuxBridge {
             ?: return Outcome(null, "", "Termux belum terpasang. Pasang Termux dari F-Droid " +
                 "atau GitHub (packages resmi, id com.termux).")
 
+        // Termux runs under a different UID. Android's scoped-storage policy
+        // blocks it from /Android/data/com.novaagent.app, even though NovaAgent
+        // itself owns that directory. Passing that path as RUN_COMMAND_WORKDIR
+        // makes Termux reject the request before bash starts.
+        //
+        // Keep app files in NovaAgent's sandbox; run shell commands in Termux's
+        // own HOME until an explicit sync bridge is added.
+        val termuxHome = "/data/data/$pkg/files/home"
+        val workIn = termuxHome
         val scratch = File(exchangeRoot(context), UUID.randomUUID().toString().take(8)).apply { mkdirs() }
         val outFile = File(scratch, "out.txt")
-
-        val sandbox = AppFiles.root(context).absolutePath
-        val workIn = cwd.takeIf { it.isNotBlank() && AppFiles.isInsideSandbox(context, it) } ?: sandbox
-        val script = """
-            export HOME=${shellQuote(AppFiles.shellHome(context).absolutePath)}
-            cd ${shellQuote(workIn)} 2>/dev/null || cd ${'$'}HOME
-            { $command ; } 2>&1 | tee ${shellQuote(outFile.absolutePath)}
-            exit ${'$'}{PIPESTATUS[0]}
-        """.trimIndent()
 
         val reqCode = seq.incrementAndGet()
         val latch = java.util.concurrent.CountDownLatch(1)
