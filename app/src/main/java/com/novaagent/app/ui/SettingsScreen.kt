@@ -131,6 +131,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
             Section("Provider")
+            var providerType by remember { mutableStateOf(saved.providerType) }
             providerList.forEachIndexed { index, provider ->
                 TextButton(onClick = {
                     Settings.select(context, index)
@@ -139,7 +140,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                     apiKey = provider.apiKey
                     model = provider.model
                     fallbackModel = provider.fallbackModel
+                    providerType = provider.providerType
                 }) { Text((if (provider == saved) "● " else "○ ") + provider.name) }
+            }
+            Row {
+                listOf("openai", "anthropic").forEach { kind ->
+                    TextButton(onClick = { providerType = kind }) { Text((if (providerType == kind) "● " else "○ ") + kind) }
+                }
             }
             OutlinedTextField(
                 value = providerName,
@@ -197,7 +204,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             BodyText("Endpoint: " + ProviderConfig(baseUrl, apiKey, model).chatEndpoint)
             Row {
                 TextButton(onClick = {
-                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider" })
+                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider" }, providerType)
                     val list = providerList.toMutableList()
                     val index = list.indexOfFirst { it.name == saved.name }
                     if (index >= 0) list[index] = current else list += current
@@ -205,7 +212,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     note = "Provider disimpan."
                 }) { Text("Simpan provider") }
                 TextButton(onClick = {
-                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider ${providerList.size + 1}" })
+                    val current = ProviderConfig(baseUrl.trim(), apiKey.trim(), model.trim(), fallbackModel.trim(), providerName.trim().ifBlank { "Provider ${providerList.size + 1}" }, providerType)
                     val list = providerList + current
                     Settings.save(context, list, list.lastIndex)
                     note = "Provider ditambahkan dan dipilih."

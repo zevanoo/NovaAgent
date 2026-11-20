@@ -184,6 +184,16 @@ object MemoryFiles {
         return "OK: ditambahkan ke ${file.path}"
     }
 
+    /** Automatically records a bounded user-personalisation checkpoint after each completed prompt. */
+    fun autoRecord(context: Context, workdir: String, prompt: String, answer: String) {
+        ensureGlobal(context)
+        val p = prompt.replace(Regex("\\s+"), " ").trim().take(240)
+        val a = answer.replace(Regex("\\s+"), " ").trim().take(160)
+        append(context, workdir, USER, "Prompt selesai: $p. Hasil: $a")
+        val file = globalFile(context, USER)
+        if (file.length() > 50_000) file.writeText(file.readText().takeLast(40_000))
+    }
+
     // ---- Pending writes (confirm policy) -------------------------------------
 
     private const val PENDING = "pending"

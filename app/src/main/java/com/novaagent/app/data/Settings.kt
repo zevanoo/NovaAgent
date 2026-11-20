@@ -11,6 +11,7 @@ data class ProviderConfig(
     val model: String = DEFAULT_MODEL,
     val fallbackModel: String = "",
     val name: String = "OpenAI",
+    val providerType: String = "openai",
 ) {
     val chatEndpoint: String get() = endpoint("chat/completions")
     val modelsEndpoint: String get() = endpoint("models")
@@ -22,7 +23,7 @@ data class ProviderConfig(
     }
 
     fun toJson() = org.json.JSONObject().put("name", name).put("baseUrl", baseUrl)
-        .put("apiKey", apiKey).put("model", model).put("fallbackModel", fallbackModel)
+        .put("apiKey", apiKey).put("model", model).put("fallbackModel", fallbackModel).put("providerType", providerType)
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -33,6 +34,7 @@ data class ProviderConfig(
             model = o.optString("model", DEFAULT_MODEL),
             fallbackModel = o.optString("fallbackModel"),
             name = o.optString("name", "Provider"),
+            providerType = o.optString("providerType", "openai"),
         )
     }
 }
@@ -51,7 +53,7 @@ object Settings {
         val array = runCatching { org.json.JSONArray(prefs.getString("providers", "[]")) }
             .getOrDefault(org.json.JSONArray())
         val list = (0 until array.length()).mapNotNull { i ->
-            array.optJSONObject(i)?.let(ProviderConfig::fromJson)
+            array.optJSONObject(i)?.let { ProviderConfig.fromJson(it).copy(apiKey = SecretStore.get(context, "provider-$i")) }
         }.toMutableList()
         if (list.isEmpty()) list += ProviderConfig(
             baseUrl = prefs.getString("baseUrl", ProviderConfig.DEFAULT_BASE_URL) ?: ProviderConfig.DEFAULT_BASE_URL,
@@ -67,9 +69,11 @@ object Settings {
     fun save(context: android.content.Context, providers: List<ProviderConfig>, activeIndex: Int) {
         if (providers.isEmpty()) return
         val index = activeIndex.coerceIn(0, providers.lastIndex)
+        val sanitized = providers.map { it.copy(apiKey = "") }
         context.getSharedPreferences("novaagent", 0).edit()
-            .putString("providers", org.json.JSONArray().apply { providers.forEach { put(it.toJson()) } }.toString())
+            .putString("providers", org.json.JSONArray().apply { sanitized.forEach { put(it.toJson()) } }.toString())
             .putInt("activeProvider", index).apply()
+        providers.forEachIndexed { i, provider -> SecretStore.put(context, "provider-$i", provider.apiKey) }
         _providers.value = providers
         _config.value = providers[index]
     }

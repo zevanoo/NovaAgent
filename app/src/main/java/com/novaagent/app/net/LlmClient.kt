@@ -41,9 +41,11 @@ object LlmClient {
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) throw IOException("HTTP $code: " + text.take(300))
-            val data = JSONObject(text).optJSONArray("data") ?: JSONArray()
-            return (0 until data.length()).mapNotNull { data.optJSONObject(it)?.optString("id") }
-                .filter { it.isNotBlank() }.distinct().sorted()
+                val root = JSONObject(text)
+                val data = root.optJSONArray("data") ?: root.optJSONArray("models")
+                    ?: throw IOException("/v1/models response missing data array")
+                return (0 until data.length()).mapNotNull { data.optJSONObject(it)?.optString("id") }
+                    .filter { it.isNotBlank() }.distinct().sorted()
         } finally { conn.disconnect() }
     }
 
@@ -67,11 +69,15 @@ object LlmClient {
         }
         val fallback = config.fallbackModel.trim()
         if (fallback.isNotBlank() && fallback != primary) {
-            try {
-                return request(config.copy(model = fallback), fallback, messages, system, tools)
-            } catch (e: IOException) {
-                last = IOException("Model utama '$primary' gagal 4 kali; fallback '$fallback' juga gagal: ${e.message}", e)
+            repeat(4) { attempt ->
+                try {
+                    return request(config.copy(model = fallback), fallback, messages, system, tools)
+                } catch (e: IOException) {
+                    last = e
+                    if (attempt < 3) Thread.sleep(500L * (attempt + 1))
+                }
             }
+            last = IOException("Model utama '$primary' gagal 4 kali; fallback '$fallback' gagal 4 kali.", last)
         }
         throw last ?: IOException("Model '$primary' gagal.")
     }
@@ -85,16 +91,29 @@ object LlmClient {
     ): Reply {
         if (!config.isUsable) throw IOException("Provider belum diatur: isi base URL dan model di Settings.")
 
-        val payload = JSONObject().apply {
+        val modelCall = JSONObject().apply {
             put("model", model)
             put("messages", JSONArray().apply {
-                system?.takeIf { it.isNotBlank() }?.let {
-                    put(JSONObject().put("role", "system").put("content", it))
-                }
+                system?.takeIf { it.isNotBlank() }?.let { put(JSONObject().put("role", "system").put("content", it)) }
                 messages.forEach { put(it) }
             })
             tools?.let { put("tools", JSONArray(it)) }
         }
+        val payload = if (config.providerType.equals("anthropic", ignoreCase = true)) {
+            JSONObject().apply {
+                put("model", model)
+                put("max_tokens", 4096)
+                put("system", system.orEmpty())
+                put("messages", JSONArray().apply { messages.filter { it.optString("role") != "system" }.forEach { put(it) } })
+                tools?.let { raw -> put("tools", JSONArray(raw).let { openAiTools -> JSONArray().apply {
+                    for (i in 0 until openAiTools.length()) {
+                        val fn = openAiTools.getJSONObject(i).getJSONObject("function")
+                        put(JSONObject().put("name", fn.getString("name")).put("description", fn.optString("description"))
+                            .put("input_schema", fn.optJSONObject("parameters") ?: JSONObject().put("type", "object")))
+                    }
+                } }) }
+            }
+        } else modelCall
 
         val conn = (URL(config.chatEndpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -102,7 +121,12 @@ object LlmClient {
             readTimeout = 180_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer " + config.apiKey)
+            if (config.providerType.equals("anthropic", ignoreCase = true)) {
+                setRequestProperty("x-api-key", asciiOnly(config.apiKey))
+                setRequestProperty("anthropic-version", "2023-06-01")
+            } else {
+                setRequestProperty("Authorization", "Bearer " + asciiOnly(config.apiKey))
+            }
         }
 
         val body = try {
@@ -116,7 +140,31 @@ object LlmClient {
             conn.disconnect()
         }
 
-        return parse(body)
+        return if (config.providerType.equals("anthropic", ignoreCase = true)) parseAnthropic(body) else parse(body)
+    }
+
+    private fun parseAnthropic(body: String): Reply {
+        val root = JSONObject(body)
+        val blocks = root.optJSONArray("content") ?: JSONArray()
+        val text = StringBuilder()
+        val calls = mutableListOf<ToolCall>()
+        for (i in 0 until blocks.length()) {
+            val block = blocks.optJSONObject(i) ?: continue
+            when (block.optString("type")) {
+                "text" -> text.append(block.optString("text"))
+                "tool_use" -> calls += ToolCall(
+                    id = block.optString("id"),
+                    name = block.optString("name"),
+                    arguments = block.optJSONObject("input") ?: JSONObject(),
+                )
+            }
+        }
+        val raw = JSONObject().put("role", "assistant").put("content", text.toString())
+        if (calls.isNotEmpty()) raw.put("tool_calls", JSONArray().apply {
+            calls.forEach { call -> put(JSONObject().put("id", call.id).put("type", "function")
+                .put("function", JSONObject().put("name", call.name).put("arguments", call.arguments.toString()))) }
+        })
+        return Reply(text.toString(), calls, raw)
     }
 
     /** For callers that only want prose (no tool loop). */

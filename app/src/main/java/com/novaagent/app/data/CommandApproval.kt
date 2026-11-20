@@ -12,6 +12,7 @@ object CommandApproval {
     private var answer: String? = null
     private val always = mutableSetOf<String>()
     private val session = mutableSetOf<String>()
+    private val decisions = mutableMapOf<String, String>()
 
     fun classify(command: String): CommandRisk {
         val c = command.lowercase()
@@ -22,33 +23,38 @@ object CommandApproval {
         return CommandRisk.NEUTRAL
     }
 
-    fun approve(command: String, choice: String) {
+    fun approve(context: android.content.Context, command: String, choice: String) {
         val key = command.trim()
         if (choice == "session") session += key
-        if (choice == "always") always += key
-        synchronized(lock) { answer = choice; lock.notifyAll() }
+        if (choice == "always") {
+            always += key
+            context.getSharedPreferences("novaagent.approvals", 0).edit().putBoolean(key, true).apply()
+        }
+        synchronized(lock) {
+            decisions[key] = choice
+            answer = choice
+            lock.notifyAll()
+        }
         pending.value = null
     }
 
-    fun rejectOnTimeout() {
-        synchronized(lock) { answer = "reject"; lock.notifyAll() }
-        pending.value = null
-    }
-
-    fun await(command: String): Boolean {
+    fun await(context: android.content.Context, command: String): Boolean {
         val risk = classify(command)
-        if (risk == CommandRisk.SAFE || session.contains(command.trim()) || always.contains(command.trim())) return true
+        val key = command.trim()
+        val saved = context.getSharedPreferences("novaagent.approvals", 0).getBoolean(key, false)
+        if (risk == CommandRisk.SAFE || session.contains(key) || always.contains(key) || saved) return true
+        synchronized(lock) { decisions.remove(key) }
         pending.value = ApprovalRequest(command, risk)
         val deadline = System.currentTimeMillis() + 300_000L
         synchronized(lock) {
             answer = null
-            while (answer == null) {
+            while (decisions[key] == null) {
                 val remaining = deadline - System.currentTimeMillis()
                 if (remaining <= 0) break
                 lock.wait(remaining)
             }
         }
         pending.value = null
-        return answer == "once" || answer == "session" || answer == "always"
+        return decisions.remove(key) in setOf("once", "session", "always")
     }
 }

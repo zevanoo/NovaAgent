@@ -74,6 +74,25 @@ object AgentTools {
             listOf("name"),
         ))
         put(tool(
+            "install_skill",
+            "Unduh dan pasang skill dari repo GitHub HTTPS. Wajib URL GitHub; perubahan ditulis ke skill user.",
+            JSONObject().apply {
+                prop("source", "string", "URL repo GitHub atau archive ZIP")
+                prop("overwrite", "boolean", "Timpa skill dengan nama sama")
+            },
+            listOf("source"),
+        ))
+        put(tool(
+            "mcp_call",
+            "Call configured MCP tool by server and original tool name.",
+            JSONObject().apply {
+                prop("server", "string", "MCP server name")
+                prop("tool", "string", "MCP tool name")
+                prop("arguments", "object", "Tool arguments")
+            },
+            listOf("server", "tool"),
+        ))
+        put(tool(
             "save_memory",
             "Simpan catatan ke memory. target=USER, SOUL, atau PROJECT.",
             JSONObject().apply {
@@ -82,16 +101,7 @@ object AgentTools {
             },
             listOf("target", "note"),
         ))
-        put(tool(
-            "mcp_call",
-            "Panggil tool MCP yang sudah dikonfigurasi. Discovery server MCP tetap dibatasi URL HTTP(S) lokal/HTTPS.",
-            JSONObject().apply {
-                prop("server", "string", "Nama server MCP")
-                prop("tool", "string", "Nama tool MCP")
-                prop("arguments", "object", "Argumen tool")
-            },
-            listOf("server", "tool"),
-        ))
+
     }.toString()
 
     private fun tool(name: String, description: String, props: JSONObject, required: List<String>) =
@@ -129,17 +139,22 @@ object AgentTools {
         } else {
             workdir
         }
+        if (name == "install_skill") {
+            val source = args.optString("source")
+            if (!com.novaagent.app.data.CommandApproval.await(context, "install_skill $source")) return "Rejected by user or approval timeout."
+        }
         if (name.startsWith("mcp_")) McpClient.invoke(context, name, args)
         else when (name) {
+            "mcp_call" -> McpClient.call(context, args.optString("server"), args.optString("tool"), args.optJSONObject("arguments") ?: JSONObject())
             "read_file" -> readFile(context, args.optString("path"), args, dir)
             "write_file" -> writeFile(context, args.optString("path"), args.optString("content"), dir)
             "list_dir" -> listDir(context, args.optString("path"), dir)
             "run_shell" -> runShell(context, args, timeoutMs, dir)
-            "mcp_call" -> McpClient.call(
+            "install_skill" -> SkillMarketplace.install(
                 context,
-                args.optString("server"),
-                args.optString("tool"),
-                args.optJSONObject("arguments") ?: JSONObject(),
+                dir,
+                args.optString("source"),
+                args.optBoolean("overwrite", false),
             )
             "save_memory" -> saveMemory(context, args.optString("target"), args.optString("note"), dir)
             "use_skill" -> Skills.body(context, dir, args.optString("name"))
@@ -168,6 +183,8 @@ object AgentTools {
     }
 
     private fun writeFile(context: Context, path: String, content: String, workdir: String): String {
+        val approval = "write_file ${resolve(context, path, workdir).path}"
+        if (!com.novaagent.app.data.CommandApproval.await(context, approval)) return "Rejected by user or approval timeout."
         val f = resolve(context, path, workdir)
         f.parentFile?.mkdirs()
         f.writeText(content)
@@ -186,7 +203,7 @@ object AgentTools {
     private fun runShell(context: Context, args: JSONObject, timeoutMs: Int, cwd: String): String {
         val command = args.optString("command")
         if (command.isBlank()) return "Error: command kosong."
-        if (!com.novaagent.app.data.CommandApproval.await(command)) return "Rejected by user or approval timeout."
+        if (!com.novaagent.app.data.CommandApproval.await(context, command)) return "Rejected by user or approval timeout."
         val where = args.optString("cwd").trim().ifBlank { cwd }
         val capMb = Limits.memoryCapMb(context)
 

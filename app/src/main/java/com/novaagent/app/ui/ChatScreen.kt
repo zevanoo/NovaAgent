@@ -334,17 +334,17 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     if (pendingApproval != null) {
         val req = pendingApproval!!
         AlertDialog(
-            onDismissRequest = { com.novaagent.app.data.CommandApproval.approve(req.command, "reject") },
+            onDismissRequest = { com.novaagent.app.data.CommandApproval.approve(context, req.command, "reject") },
             title = { Text("Approval command · ${req.risk.label}") },
             text = { SelectionContainer { Text(req.command, style = monoStyle(12)) } },
             confirmButton = {
                 Row {
-                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "once") }) { Text("Allow once") }
-                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "session") }) { Text("This session") }
-                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "always") }) { Text("Always") }
+                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(context, req.command, "once") }) { Text("Allow once") }
+                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(context, req.command, "session") }) { Text("This session") }
+                    TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(context, req.command, "always") }) { Text("Always") }
                 }
             },
-            dismissButton = { TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(req.command, "reject") }) { Text("Reject") } },
+            dismissButton = { TextButton(onClick = { com.novaagent.app.data.CommandApproval.approve(context, req.command, "reject") }) { Text("Reject") } },
         )
     }
 

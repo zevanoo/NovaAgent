@@ -26,6 +26,7 @@ import com.novaagent.app.data.Message
 import com.novaagent.app.data.SessionTitle
 import com.novaagent.app.data.Snapshots
 import com.novaagent.app.data.Workspace
+import com.novaagent.app.net.LlmClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -193,6 +194,11 @@ class AgentService : Service() {
                     )
                 )
                 dao.touchSession(sessionId, title.take(40), System.currentTimeMillis())
+
+                runCatching {
+                    val promptText = dao.contents(sessionId).lastOrNull().orEmpty()
+                    MemoryFiles.autoRecord(this@AgentService, workdir, promptText, result.text)
+                }
 
                 // Memory grows with use, not with every turn: only a limit trip is
                 // worth persisting without the model asking (it records where it got stuck).
