@@ -144,6 +144,11 @@ object AgentTools {
             val source = args.optString("source")
             if (!com.novaagent.app.data.CommandApproval.await(context, "install_skill $source")) return "Rejected by user or approval timeout."
         }
+        if (name == "mcp_call") {
+            val server = args.optString("server")
+            val tool = args.optString("tool")
+            if (!com.novaagent.app.data.CommandApproval.await(context, "mcp_call $server $tool")) return "Rejected by user or approval timeout."
+        }
         if (name.startsWith("mcp_")) McpClient.invoke(context, name, args)
         else when (name) {
             "mcp_call" -> McpClient.call(context, args.optString("server"), args.optString("tool"), args.optJSONObject("arguments") ?: JSONObject())

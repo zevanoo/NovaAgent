@@ -184,12 +184,24 @@ object MemoryFiles {
         return "OK: ditambahkan ke ${file.path}"
     }
 
-    /** Automatically records a bounded user-personalisation checkpoint after each completed prompt. */
     fun autoRecord(context: Context, workdir: String, prompt: String, answer: String) {
         ensureGlobal(context)
-        val p = prompt.replace(Regex("\\s+"), " ").trim().take(240)
-        val a = answer.replace(Regex("\\s+"), " ").trim().take(160)
-        append(context, workdir, USER, "Prompt selesai: $p. Hasil: $a")
+        val current = read(globalFile(context, USER)).orEmpty()
+        val extracted = runCatching {
+            com.novaagent.app.net.LlmClient.chat(
+                Settings.config.value,
+                listOf(com.novaagent.app.agent.AgentLoop.userMessage(
+                    "Extract only durable user preferences, personalisation, or stable facts explicitly stated by user " +
+                        "that improve future assistance. Never save secrets, credentials, one-off tasks, project details, " +
+                        "or assistant-generated claims. Return at most one concise bullet, or exactly NONE.\n" +
+                        "Current profile:\n${current.take(3000)}\nUser prompt:\n${prompt.take(1500)}\nTurn result:\n${answer.take(1000)}"
+                )),
+                "You extract durable user profile facts. Do not infer. Output exactly NONE when no clear stable user fact exists.",
+            ).trim()
+        }.getOrNull().orEmpty()
+        if (extracted.isBlank() || extracted.equals("NONE", ignoreCase = true)) return
+        val fact = extracted.removePrefix("- ").take(400)
+        if (fact !in current) append(context, workdir, USER, fact)
         val file = globalFile(context, USER)
         if (file.length() > 50_000) file.writeText(file.readText().takeLast(40_000))
     }

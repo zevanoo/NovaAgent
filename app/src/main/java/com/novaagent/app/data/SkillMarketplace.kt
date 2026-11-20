@@ -14,21 +14,52 @@ object SkillMarketplace {
             return "Error: sumber skill harus URL GitHub HTTPS."
         }
         val staging = File(context.cacheDir, "skill-download-${System.currentTimeMillis()}").apply { mkdirs() }
+        var connection: HttpURLConnection? = null
         return try {
             val archive = File(staging, "skill.zip")
             val url = if (uri.contains("github.com/") && !uri.endsWith(".zip"))
                 uri.trimEnd('/') + "/archive/refs/heads/main.zip" else uri
-            val conn = URL(url).openConnection() as HttpURLConnection
+            connection = URL(url).openConnection() as HttpURLConnection
+            val conn = connection!!
+            conn.instanceFollowRedirects = false
             conn.connectTimeout = 15_000; conn.readTimeout = 60_000
             if (conn.responseCode !in 200..299) return "Error: download HTTP ${conn.responseCode}"
-            conn.inputStream.use { input -> archive.outputStream().use { input.copyTo(it) } }
+            val size = conn.contentLengthLong
+            if (size > MAX_ARCHIVE_BYTES) return "Error: archive melewati batas 5 MB."
+            var downloaded = 0L
+            conn.inputStream.use { input -> archive.outputStream().use { output ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    downloaded += n
+                    if (downloaded > MAX_ARCHIVE_BYTES) return "Error: archive melewati batas 5 MB."
+                    output.write(buffer, 0, n)
+                }
+            } }
             val extracted = File(staging, "unpacked").apply { mkdirs() }
+            var count = 0
+            var expanded = 0L
             ZipInputStream(archive.inputStream()).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
+                    count++
+                    if (count > MAX_ENTRIES) return "Error: archive punya terlalu banyak file."
                     val out = File(extracted, entry.name).canonicalFile
                     if (!out.path.startsWith(extracted.canonicalPath + File.separator)) return "Error: archive path traversal."
-                    if (entry.isDirectory) out.mkdirs() else { out.parentFile?.mkdirs(); out.outputStream().use { zip.copyTo(it) } }
+                    if (entry.isDirectory) out.mkdirs() else {
+                        out.parentFile?.mkdirs()
+                        out.outputStream().use { output ->
+                            val buffer = ByteArray(8192)
+                            while (true) {
+                                val n = zip.read(buffer)
+                                if (n < 0) break
+                                expanded += n
+                                if (expanded > MAX_EXPANDED_BYTES) return "Error: hasil ekstrak melewati batas 10 MB."
+                                output.write(buffer, 0, n)
+                            }
+                        }
+                    }
                 }
             }
             val skill = extracted.walkTopDown().firstOrNull { it.isDirectory && File(it, "SKILL.md").isFile }
@@ -38,6 +69,13 @@ object SkillMarketplace {
             Skills.install(context, workdir, skill, overwrite)
         } catch (e: Exception) {
             "Error: skill gagal dipasang: ${e.message ?: e.javaClass.simpleName}"
-        } finally { staging.deleteRecursively() }
+        } finally {
+            connection?.disconnect()
+            staging.deleteRecursively()
+        }
     }
+
+    private const val MAX_ARCHIVE_BYTES = 5L * 1024 * 1024
+    private const val MAX_EXPANDED_BYTES = 10L * 1024 * 1024
+    private const val MAX_ENTRIES = 500
 }
