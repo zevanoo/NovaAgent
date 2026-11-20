@@ -22,9 +22,9 @@ object Skills {
         // project: skills shipped with the repo being worked on
         workdir.takeIf { it.isNotBlank() }?.let { File(it, ".novaagent/skills") },
         // user: installed by the user, survives project switches
-        File(context.filesDir, "skills"),
+        AppFiles.skills(context),
         // bundled: ships inside the APK's asset-unpacked dir
-        File(context.filesDir, "bundled-skills"),
+        File(context.filesDir, "bundled-skills"),  // read-only, ships in the APK
     ).apply { forEach { it.mkdirs() } }
 
     data class Skill(

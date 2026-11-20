@@ -42,6 +42,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val dao = ChatDb.of(app).chat()
     private val prefs = app.getSharedPreferences("novaagent", 0)
+    /** Counts down: optimistic rows get -1, -2, ... */
     private var seq = 0L
 
     val pendingMemory = AgentState.pendingMemory
@@ -90,7 +91,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val list = skills()
         return if (list.isEmpty()) {
             "Belum ada skill terpasang.\nInstal lewat Settings → Skill, atau taruh folder skill di " +
-                File(getApplication<Application>().filesDir, "skills").absolutePath
+                com.novaagent.app.data.AppFiles.skills(getApplication()).absolutePath
         } else {
             list.joinToString("\n") { "• ${it.name} — ${it.description.take(90)}" }
         }
@@ -122,6 +123,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         welcome = I18n.welcome(app)
+        // After the app was killed and reopened, AgentState is empty but the
+        // service may still be mid-turn. Ask it, so the progress row and the Stop
+        // button come back instead of showing an idle chat that rejects retry.
+        viewModelScope.launch {
+            AgentState.reportedSession.collect { active ->
+                when {
+                    active > 0L -> {
+                        AgentState.busy.value = true
+                        if (sessionId == 0L || sessionId == active) {
+                            if (active != sessionId) open(active)
+                        }
+                    }
+                    active == 0L -> AgentState.busy.value = false
+                }
+            }
+        }
         viewModelScope.launch {
             // Reopen the last session only if it has messages; an empty one was a
             // draft that never became real, so the user lands on a fresh draft.
@@ -283,7 +300,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Re-runs the turn that produced [message], from the prompt that opened it. */
     fun retry(message: UiMessage) = viewModelScope.launch {
-        if (busy.value) return@launch
+        // The cleared check below is authoritative: a stale busy flag from a dead
+        // process used to block retry forever.
+        AgentService.queryState(getApplication())
+        kotlinx.coroutines.delay(120)
+        if (AgentState.running.value && AgentState.session.value == sessionId) return@launch
         val id = sessionId
         val rows = dao.messages(id)
         val index = rows.indexOfFirst { it.id == message.id }
@@ -348,7 +369,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         messages.value = messages.value + UiMessage(nextId(), role, text)
     }
 
-    private fun nextId(): Long = ++seq
+    /**
+     * Temporary ids count DOWN from -1. Room's autoincrement only issues positive
+     * ids, so an optimistic row can never collide with a persisted one and trip
+     * LazyColumn's "key was already used" check.
+     */
+    private fun nextId(): Long = --seq
 
     private suspend fun persist(role: String, text: String) {
         val id = sessionId

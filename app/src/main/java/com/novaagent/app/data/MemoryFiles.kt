@@ -6,10 +6,10 @@ import java.io.File
 /**
  * Two-tier memory.
  *
- * Global (app filesDir/memory/global): SOUL.md persona + USER.md personalization.
+ * Global (app external files/memory/global): SOUL.md persona + USER.md personalization.
  * Loaded into every session regardless of project.
  *
- * Project (app filesDir/memory/projects/<slug>/MEMORY.md): deep context for one
+ * Project (app external files/memory/projects/<slug>/MEMORY.md): deep context for one
  * working directory. Loaded only when the session's workdir resolves into it, so
  * the model does not carry unrelated project detail in every prompt.
  */
@@ -20,9 +20,9 @@ object MemoryFiles {
 
     private const val PROMPT_BUDGET = 6_000
 
-    fun globalDir(context: Context): File = File(context.filesDir, "memory/global").apply { mkdirs() }
+    fun globalDir(context: Context): File = File(AppFiles.memory(context), "global").apply { mkdirs() }
 
-    fun projectsDir(context: Context): File = File(context.filesDir, "memory/projects").apply { mkdirs() }
+    fun projectsDir(context: Context): File = File(AppFiles.memory(context), "projects").apply { mkdirs() }
 
     fun projectDir(context: Context, slug: String): File = File(projectsDir(context), slug).apply { mkdirs() }
 

@@ -93,7 +93,7 @@ fun PermissionScreen(onDone: () -> Unit) {
                 icon = Icons.Default.Storage,
                 title = "Folder file",
                 granted = true,
-                detail = "File agent tersimpan di " + AppFiles.media(context).absolutePath +
+                detail = "File agent tersimpan di " + AppFiles.root(context).absolutePath +
                     " — terbuka di file manager tanpa izin tambahan.",
                 onRequest = {},
             )

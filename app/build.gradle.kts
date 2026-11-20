@@ -23,10 +23,6 @@ android {
 
     // The bundled busybox is exec'd from nativeLibraryDir, which only works when
     // the libs are really extracted at install time instead of mmap'd from the APK.
-    packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
     }
 
     compileOptions {

@@ -2,6 +2,7 @@ package com.novaagent.app.bridge
 
 import android.content.Context
 import android.content.Intent
+import com.novaagent.app.data.AppFiles
 import java.io.File
 import java.util.UUID
 
@@ -33,9 +34,15 @@ object TermuxBridge {
         val ok: Boolean get() = error == null && exitCode == 0
     }
 
-    /** Scratch dir for one call. App-private, so Termux needs no storage grant. */
-    fun exchangeRoot(context: Context): File =
-        File(context.filesDir, "termux-run").apply { mkdirs() }
+    /**
+     * Scratch dir for one call.
+     *
+     * MUST be on shared storage: Termux runs as a different uid and Android's
+     * SELinux policy blocks it from writing into the app's internal filesDir, so
+     * an internal exchange dir made every command time out with no output at all.
+     * `/sdcard/Android/data/<pkg>` is writable by both sides.
+     */
+    fun exchangeRoot(context: Context): File = AppFiles.exchange(context)
 
     fun isInstalled(context: Context): Boolean = try {
         context.packageManager.getPackageInfo(TERMUX, 0)
@@ -62,9 +69,18 @@ object TermuxBridge {
         if (!dir.isDirectory) return Outcome(null, "", "Tidak bisa membuat folder tukar: $dir")
         val out = File(dir, "out.txt")
         val code = File(dir, "code.txt")
-        val workIn = cwd.takeIf { it.isNotBlank() } ?: HOME
+        // Always start inside the sandbox: a command must never inherit an
+        // arbitrary cwd from the caller, and the app's home is the only place the
+        // agent is allowed to work.
+        val sandbox = AppFiles.root(context).absolutePath
+        val workIn = cwd.takeIf { it.isNotBlank() && AppFiles.isInsideSandbox(context, it) }
+            ?: sandbox
 
+        // HOME is exported, not assumed: if Termux has never run, its shell has no
+        // state and `set -e`-style failures would leave code.txt unwritten, which
+        // the poller can only see as a timeout.
         val script = """
+            export HOME=$HOME
             cd ${quote(workIn)} 2>/dev/null || cd $HOME
             {
             $command
@@ -91,8 +107,24 @@ object TermuxBridge {
             )
         }
 
+        // First output write proves Termux actually picked the job up. If nothing
+        // appears while no marker exists, the intent was silently refused (the
+        // usual cause: allow-external-apps is off) - say so in a few seconds
+        // instead of burning the whole timeout.
+        val startMark = System.currentTimeMillis()
+        var sawActivity = false
+
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
+            if (!sawActivity && (out.exists() || code.exists())) sawActivity = true
+            if (!sawActivity && System.currentTimeMillis() - startMark > START_GRACE_MS) {
+                dir.deleteRecursively()
+                return Outcome(
+                    null, "",
+                    "Termux tidak menjalankan perintah. Pastikan allow-external-apps=true " +
+                        "di ~/.termux/termux.properties, lalu restart Termux.",
+                )
+            }
             if (code.isFile && code.length() > 0) {
                 val text = out.takeIf { it.isFile }?.readText().orEmpty()
                 val exit = code.readText().trim().toIntOrNull()
@@ -105,6 +137,9 @@ object TermuxBridge {
         dir.deleteRecursively()
         return Outcome(null, "", "Timeout ${timeoutMs / 1000}s — perintah tidak selesai.")
     }
+
+    /** How long to wait for Termux to touch the scratch dir before giving up. */
+    private const val START_GRACE_MS = 8_000L
 
     private fun quote(path: String) = "'" + path.replace("'", "'\\''") + "'"
 }

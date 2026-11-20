@@ -36,4 +36,17 @@ object AgentState {
      * what it produced, instead of killing the service mid-command.
      */
     val interrupt = MutableStateFlow(false)
+
+    /**
+     * Session the running turn belongs to, or 0.
+     *
+     * The service outlives the Activity, but this object does not survive process
+     * death; after the app is killed and reopened, the UI has to ask the service
+     * what is actually running instead of trusting its own (empty) state. That is
+     * what [session] plus [running] answer.
+     */
+    val session = MutableStateFlow(0L)
+
+    /** Answer to the last [session] probe; bumped so the UI can react once. */
+    val reportedSession = MutableStateFlow(-1L)
 }

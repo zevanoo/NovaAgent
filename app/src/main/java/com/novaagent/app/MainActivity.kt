@@ -36,6 +36,20 @@ private fun Root() {
         mutableStateOf(if (prefs.getBoolean("onboarded", false)) Screen.Chat else Screen.Permissions)
     }
 
+    // Every time the Activity comes back, ask the service whether a turn is still
+    // running. Without this the UI showed an idle chat while the notification said
+    // the agent was working.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
+                com.novaagent.app.service.AgentService.queryState(LocalContext.current)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     BackHandler(enabled = screen == Screen.Settings) {
         vm.reloadLanguage()
         screen = Screen.Chat

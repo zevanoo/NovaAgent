@@ -22,21 +22,11 @@ import java.io.File
 object AgentTools {
 
     /**
-     * Paths `read_file` / `write_file` / `list_dir` may touch.
-     *
-     * Commands run inside Termux, so the filesystem here is Termux's, not the
-     * app sandbox: home, the shared storage tree, and Termux's own tmp. The list
-     * exists so a typo fails loudly instead of writing somewhere the user cannot
-     * find; `run_shell` is deliberately unrestricted since it is the escape hatch.
+     * Paths `read_file` / `write_file` / `list_dir` may touch: the app sandbox and
+     * nothing else. Same rule the shell enforces, so there is exactly one boundary
+     * to reason about and no way to read the user's photos with a typo.
      */
-    private val allowedRoots = listOf(
-        "/sdcard",
-        "/storage/emulated/0",
-        "/storage/self/primary",
-        "/data/data/com.termux/files/home",
-        "/data/data/com.termux/files/usr/tmp",
-        "/data/local/tmp",
-    )
+    private fun allowedRoot(context: Context): String = AppFiles.root(context).absolutePath
 
     val defs: String = JSONArray().apply {
         put(tool(
@@ -221,7 +211,8 @@ object AgentTools {
     }
 
     private fun resolve(context: Context, path: String, workdir: String): File {
-        val home = TERMUX_HOME
+        val root = allowedRoot(context)
+        val home = AppFiles.shellHome(context).absolutePath
         val raw = path.trim().ifBlank { workdir }
         val expanded = when {
             raw == "~" -> home
@@ -231,12 +222,13 @@ object AgentTools {
             else -> "$home/$raw"
         }
         val f = File(expanded).canonicalFile
-        if (allowedRoots.none { f.path == it || f.path.startsWith("$it/") }) {
-            throw SecurityException("Path di luar area yang diizinkan: ${f.path}")
+        if (!AppFiles.isInsideSandbox(context, f.path)) {
+            throw SecurityException(
+                "Path di luar workdir agent: ${f.path}. Hanya $root yang bisa diakses."
+            )
         }
         return f
     }
-    private const val TERMUX_HOME = "/data/data/com.termux/files/home"
     private const val MAX_OUTPUT = 8_000
 }
 

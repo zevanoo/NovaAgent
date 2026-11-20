@@ -116,10 +116,23 @@ abstract class ChatDb : RoomDatabase() {
             }
         }
 
+        /**
+         * Database lives in the app's external files dir so history is in one place
+         * with projects, skills and memory. The old copy in the internal dir is
+         * moved once, before Room opens, so nobody loses their sessions on upgrade.
+         */
         fun of(context: Context): ChatDb = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(
-                context.applicationContext, ChatDb::class.java, "novaagent.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+            instance ?: run {
+                val target = AppFiles.database(context)
+                if (!target.isFile) {
+                    val legacy = context.getDatabasePath("novaagent.db")
+                    if (legacy.isFile) runCatching { legacy.copyTo(target, overwrite = true) }
+                }
+                Room.databaseBuilder(context.applicationContext, ChatDb::class.java, target.absolutePath)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .build()
+                    .also { instance = it }
+            }
         }
     }
 }

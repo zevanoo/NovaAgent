@@ -66,6 +66,18 @@ class AgentService : Service() {
         val sessionId = intent?.getLongExtra(EXTRA_SESSION, 0L) ?: 0L
 
         when (action) {
+            ACTION_QUERY -> {
+                // The UI came back and wants to know what is actually running.
+                // Answering from the service is the only truth after process death.
+                val active = if (job?.isActive == true) AgentState.session.value else 0L
+                AgentState.reportedSession.value = active
+                AgentState.running.value = active != 0L
+                if (active == 0L) {
+                    AgentState.busy.value = false
+                    AgentState.status.value = ""
+                }
+                return START_STICKY
+            }
             ACTION_CONTINUE -> if (sessionId != 0L) {
                 // "lanjut": same thread, fresh round budget.
                 startTurn(sessionId, continueThread = true)
@@ -100,6 +112,7 @@ class AgentService : Service() {
 
         job = scope.launch {
             AgentState.busy.value = true
+            AgentState.session.value = sessionId
             AgentState.error.value = null
             AgentState.interrupt.value = false
             val dao = ChatDb.of(this@AgentService).chat()
@@ -260,6 +273,7 @@ class AgentService : Service() {
         scope.cancel()
         AgentState.running.value = false
         AgentState.busy.value = false
+        AgentState.session.value = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -363,6 +377,7 @@ class AgentService : Service() {
         private const val ACTION_RUN = "com.novaagent.app.RUN_TURN"
         private const val ACTION_CONTINUE = "com.novaagent.app.CONTINUE_TURN"
         private const val ACTION_NEW_PROMPT = "com.novaagent.app.NEW_PROMPT"
+        private const val ACTION_QUERY = "com.novaagent.app.QUERY_STATE"
         private const val EXTRA_SESSION = "sessionId"
         private const val TIMEOUT_DIR_MS = 20_000
 
@@ -371,6 +386,12 @@ class AgentService : Service() {
                 .setAction(ACTION_RUN)
                 .putExtra(EXTRA_SESSION, sessionId)
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        /** Asks a live service what it is doing. Harmless when it is not running. */
+        fun queryState(context: Context) {
+            val intent = Intent(context, AgentService::class.java).setAction(ACTION_QUERY)
+            runCatching { context.startService(intent) }
         }
 
         fun continueTurn(context: Context, sessionId: Long) {

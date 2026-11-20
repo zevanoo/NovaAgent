@@ -176,19 +176,22 @@ fun SettingsScreen(onBack: () -> Unit) {
             Field(
                 value = defaultDir,
                 onValueChange = { defaultDir = it },
-                placeholder = AppFiles.media(context).absolutePath,
+                placeholder = AppFiles.root(context).absolutePath,
             )
             Row {
                 TextButton(onClick = {
-                    Workspace.setDefaultDir(context, defaultDir)
-                    AgentState.workdirVersion.value += 1
-                    note = "Default workdir disimpan."
+                    note = if (Workspace.setDefaultDir(context, defaultDir)) {
+                        AgentState.workdirVersion.value += 1
+                        "Default workdir disimpan."
+                    } else {
+                        "Ditolak: workdir harus di dalam " + AppFiles.root(context).absolutePath
+                    }
                 }) { Text("Simpan dir") }
                 TextButton(onClick = {
-                    defaultDir = AppFiles.media(context).absolutePath
+                    note = "Pakai folder bawaan."
+                    defaultDir = AppFiles.projects(context).absolutePath
                     Workspace.setDefaultDir(context, defaultDir)
                     AgentState.workdirVersion.value += 1
-                    note = "Kembali ke folder bawaan app."
                 }) { Text("Pakai bawaan") }
             }
 
@@ -203,7 +206,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
             if (skills.isEmpty()) {
                 BodyText("Belum ada. Taruh folder skill (berisi SKILL.md) di:\n" +
-                    java.io.File(context.filesDir, "skills").absolutePath)
+                    com.novaagent.app.data.AppFiles.skills(context).absolutePath)
             } else {
                 skills.forEach { s ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
