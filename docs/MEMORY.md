@@ -468,3 +468,8 @@ APK debug **17,522,859 B**, sha256
 - GitHub Release `v1.0.0` + asset `novaagent-1.0.0-debug.apk`
   (sha256 `eaf12f263956906f93ad084c49f1525b4d2bf2c980b557eb9b796d03c443fa4d`).
 - Masih debug-signed; signing release belum ada.
+
+## Penutup
+
+- Lisensi MIT (`LICENSE`), repo `zevanoo/NovaAgent` dipublikasikan.
+- Project dinyatakan selesai pada rilis 1.0.0.

@@ -65,4 +65,4 @@ Semua data aplikasi di `/sdcard/Android/data/com.novaagent.app/files/`:
 
 ## Lisensi
 
-Belum ditentukan.
+MIT — lihat [LICENSE](LICENSE).
