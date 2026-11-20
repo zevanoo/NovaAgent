@@ -454,3 +454,17 @@ APK debug **17,522,859 B**, sha256
 - Termux menerima RUN_COMMAND (butuh allow-external-apps di sisi user).
 - Revert benar-benar mengembalikan file.
 - Draft → sesi baru saat prompt pertama.
+
+## Rilis 1.0.0 (2026-11-20)
+
+- `versionName = 1.0.0`, `versionCode = 1`.
+- API key provider kini persisten: `SecretStore` (Android Keystore, AES-GCM) per
+  `providerId`; `toJson()` tidak lagi menulis `apiKey`; `Settings.load()` dipanggil
+  juga dari `AgentService.onCreate()` agar service bisa jalan tanpa UI.
+- Legacy migration: `apiKey` lama di SharedPreferences dipindah ke `SecretStore`
+  lalu dihapus dari prefs.
+- Repo dirapikan: dokumen pindah ke `docs/`, APK keluar dari repo (`*.apk` di
+  `.gitignore`), artefak build disimpan di `E:/novaagent-builds/`.
+- GitHub Release `v1.0.0` + asset `novaagent-1.0.0-debug.apk`
+  (sha256 `eaf12f263956906f93ad084c49f1525b4d2bf2c980b557eb9b796d03c443fa4d`).
+- Masih debug-signed; signing release belum ada.
