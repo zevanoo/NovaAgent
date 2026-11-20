@@ -7,6 +7,7 @@ import com.novaagent.app.data.AppFiles
 import com.novaagent.app.data.Limits
 import com.novaagent.app.data.MemoryFiles
 import com.novaagent.app.data.Skills
+import com.novaagent.app.data.SkillMarketplace
 import com.novaagent.app.net.LlmClient
 import com.novaagent.app.net.McpClient
 import com.novaagent.app.net.ToolCall
